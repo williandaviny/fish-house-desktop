@@ -1,0 +1,53 @@
+name: 'Release Build'
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NSIS Compiler
+        run: choco install nsis -y
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Build Web Frontend
+        run: npm run build
+
+      - name: Build Tauri Desktop Executable (.exe)
+        run: npx tauri build --ci
+
+      - name: Publish GitHub Release with .exe
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          name: Fish House Desktop ${{ github.ref_name || 'v1.0.0' }}
+          body: |
+            ## 🐟 Fish House Desktop - Instalador Windows Oficial
+            
+            Sistema de Frente de Caixa (PDV), pesagem Toledo MGV 7 e Gestão Comercial Offline-First para a Peixaria Premium Fish House.
+            
+            - **Instalador:** Baixe o arquivo `.exe` abaixo para instalar no computador da loja.
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
