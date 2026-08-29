@@ -1,6 +1,3 @@
-import initSqlJs, { Database } from 'sql.js';
-import { INITIAL_SQL_SCHEMA } from './schema';
-import { IDatabaseService } from './adapter';
 import { 
   Product, 
   TaraBalanca, 
@@ -13,301 +10,319 @@ import {
   DashboardMetrics,
   CartItem
 } from '../../types/database';
+import { IDatabaseService } from './adapter';
 
-const DB_STORAGE_KEY = 'fish_house_sqlite_db';
+const DB_STORAGE_KEY = 'fish_house_v1_database';
+
+interface DatabaseState {
+  config: EmpresaConfig;
+  products: Record<string, Product>;
+  taras: Record<string, TaraBalanca>;
+  vendas: Record<string, Venda>;
+  itens_venda: Record<string, ItemVenda>;
+  caixas: Record<string, CaixaSessao>;
+  movimentos_caixa: Record<string, MovimentoCaixa>;
+  pedidos_online: Record<string, PedidoOnline>;
+  sequence_venda: number;
+}
+
+const DEFAULT_CONFIG: EmpresaConfig = {
+  id: 'default',
+  nome_empresa: 'Fish House - Peixaria Premium',
+  cnpj: '00.000.000/0001-00',
+  telefone: '(47) 99999-9999',
+  endereco: 'Navegantes - SC',
+  mensagem_cupom: 'Obrigado pela preferência! Peixes frescos todos os dias.',
+  auto_sync_interval: 30,
+  supabase_url: 'https://mqktczeqkynqqgzkbrno.supabase.co',
+  supabase_anon_key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa3RjemVxa3lucXFnemticm5vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMzI3MDUsImV4cCI6MjA5OTkwODcwNX0.vFo6S1aa1Uv2JsleRh50VkoL4aknzjepgUvqOI0frNY',
+  impressora_largura: '80mm'
+};
+
+const DEFAULT_TARAS: TaraBalanca[] = [
+  { id: 'tara-1', codigo: 1, descricao: 'Bandeja P', peso: 0.025 },
+  { id: 'tara-2', codigo: 2, descricao: 'Bandeja M', peso: 0.040 },
+  { id: 'tara-3', codigo: 3, descricao: 'Bandeja G', peso: 0.060 },
+  { id: 'tara-4', codigo: 4, descricao: 'Sacola Térmica', peso: 0.080 }
+];
 
 export class SQLiteDatabaseService implements IDatabaseService {
-  private db: Database | null = null;
-  private isInitialized = false;
+  private state: DatabaseState;
+  private isLoaded = false;
+
+  constructor() {
+    this.state = this.getInitialEmptyState();
+  }
+
+  private getInitialEmptyState(): DatabaseState {
+    const tarasMap: Record<string, TaraBalanca> = {};
+    DEFAULT_TARAS.forEach(t => { tarasMap[t.id] = t; });
+
+    return {
+      config: { ...DEFAULT_CONFIG },
+      products: {},
+      taras: tarasMap,
+      vendas: {},
+      itens_venda: {},
+      caixas: {},
+      movimentos_caixa: {},
+      pedidos_online: {},
+      sequence_venda: 1000
+    };
+  }
 
   public async init(): Promise<void> {
-    if (this.isInitialized && this.db) return;
+    if (this.isLoaded) return;
 
     try {
-      const SQL = await initSqlJs({
-        locateFile: (file) => `https://sql.js.org/dist/${file}`
-      });
-
-      // Carrega do IndexedDB/LocalStorage se existir
-      const savedData = await this.loadFromStorage();
-      if (savedData) {
-        this.db = new SQL.Database(savedData);
+      // 1. Tenta carregar do IndexedDB
+      const loaded = await this.loadFromStorage();
+      if (loaded) {
+        this.state = loaded;
       } else {
-        this.db = new SQL.Database();
+        // 2. Fallback para localStorage
+        const local = localStorage.getItem(DB_STORAGE_KEY);
+        if (local) {
+          try {
+            this.state = JSON.parse(local);
+          } catch (_) {
+            this.state = this.getInitialEmptyState();
+          }
+        } else {
+          this.state = this.getInitialEmptyState();
+        }
       }
 
-      // Executa criação do schema
-      this.db.run(INITIAL_SQL_SCHEMA);
-
-      // Garante configuração padrão inicial
-      this.db.run(`
-        INSERT OR IGNORE INTO empresa_config (id, nome_empresa)
-        VALUES ('default', 'Fish House - Peixaria Premium')
-      `);
-
-      this.isInitialized = true;
+      this.isLoaded = true;
       await this.persist();
-      console.log('[SQLite Local] Banco de dados inicializado com sucesso!');
-    } catch (err) {
-      console.error('[SQLite Local] Erro crítico ao inicializar banco local:', err);
-      throw err;
+      console.log('[Database Local] Banco inicializado instantaneamente!');
+    } catch (e) {
+      console.error('[Database Local] Erro ao inicializar:', e);
+      this.state = this.getInitialEmptyState();
+      this.isLoaded = true;
     }
   }
 
   private async persist(): Promise<void> {
-    if (!this.db) return;
     try {
-      const data = this.db.export();
-      await this.saveToStorage(data);
+      const serialized = JSON.stringify(this.state);
+      // Salva no LocalStorage (instantâneo)
+      try {
+        localStorage.setItem(DB_STORAGE_KEY, serialized);
+      } catch (_) {}
+
+      // Salva no IndexedDB (persistência de longo prazo)
+      await this.saveToIndexedDB(this.state);
     } catch (err) {
-      console.error('[SQLite Local] Erro ao persistir banco:', err);
+      console.error('[Database Local] Erro ao salvar:', err);
     }
   }
 
-  private async saveToStorage(data: Uint8Array): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open('FishHouseDB_v1', 1);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains('sqlite')) {
-          db.createObjectStore('sqlite');
-        }
-      };
-      request.onsuccess = () => {
-        const db = request.result;
-        const tx = db.transaction('sqlite', 'readwrite');
-        const store = tx.objectStore('sqlite');
-        store.put(data, DB_STORAGE_KEY);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      };
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  private async loadFromStorage(): Promise<Uint8Array | null> {
+  private async saveToIndexedDB(data: DatabaseState): Promise<void> {
     return new Promise((resolve) => {
-      const request = indexedDB.open('FishHouseDB_v1', 1);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains('sqlite')) {
-          db.createObjectStore('sqlite');
-        }
-      };
-      request.onsuccess = () => {
-        const db = request.result;
-        const tx = db.transaction('sqlite', 'readonly');
-        const store = tx.objectStore('sqlite');
-        const getReq = store.get(DB_STORAGE_KEY);
-        getReq.onsuccess = () => {
-          if (getReq.result instanceof Uint8Array) {
-            resolve(getReq.result);
-          } else {
-            resolve(null);
+      try {
+        const req = indexedDB.open('FishHouseDB_v2', 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('store')) {
+            db.createObjectStore('store');
           }
         };
-        getReq.onerror = () => resolve(null);
-      };
-      request.onerror = () => resolve(null);
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction('store', 'readwrite');
+          tx.objectStore('store').put(data, DB_STORAGE_KEY);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+        };
+        req.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
     });
   }
 
-  // --- CONFIGURAÇÕES ---
+  private async loadFromStorage(): Promise<DatabaseState | null> {
+    return new Promise((resolve) => {
+      try {
+        const req = indexedDB.open('FishHouseDB_v2', 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('store')) {
+            db.createObjectStore('store');
+          }
+        };
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction('store', 'readonly');
+          const getReq = tx.objectStore('store').get(DB_STORAGE_KEY);
+          getReq.onsuccess = () => resolve(getReq.result || null);
+          getReq.onerror = () => resolve(null);
+        };
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  // --- CONFIG ---
   public async getConfig(): Promise<EmpresaConfig> {
-    const res = this.db!.exec("SELECT * FROM empresa_config WHERE id = 'default' LIMIT 1");
-    if (!res.length || !res[0].values.length) {
-      return {
-        id: 'default',
-        nome_empresa: 'Fish House - Peixaria Premium',
-        cnpj: '',
-        telefone: '',
-        endereco: '',
-        mensagem_cupom: 'Obrigado pela preferência!',
-        auto_sync_interval: 30,
-        supabase_url: '',
-        supabase_anon_key: '',
-        impressora_largura: '80mm'
-      };
-    }
-    return this.rowToObject<EmpresaConfig>(res[0].columns, res[0].values[0]);
+    return { ...this.state.config };
   }
 
   public async saveConfig(config: Partial<EmpresaConfig>): Promise<void> {
-    const current = await this.getConfig();
-    const merged = { ...current, ...config, updated_at: new Date().toISOString() };
-    this.db!.run(
-      `INSERT OR REPLACE INTO empresa_config (
-        id, nome_empresa, cnpj, telefone, endereco, mensagem_cupom, auto_sync_interval, supabase_url, supabase_anon_key, impressora_largura, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        'default',
-        merged.nome_empresa,
-        merged.cnpj,
-        merged.telefone,
-        merged.endereco,
-        merged.mensagem_cupom,
-        merged.auto_sync_interval,
-        merged.supabase_url,
-        merged.supabase_anon_key,
-        merged.impressora_largura,
-        merged.updated_at
-      ]
-    );
+    this.state.config = { ...this.state.config, ...config };
     await this.persist();
   }
 
   // --- PRODUTOS ---
   public async getProducts(): Promise<Product[]> {
-    const res = this.db!.exec("SELECT * FROM products WHERE is_deleted = 0 ORDER BY name ASC");
-    if (!res.length) return [];
-    return res[0].values.map(row => this.rowToObject<Product>(res[0].columns, row));
+    return Object.values(this.state.products)
+      .filter(p => !p.is_deleted)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   public async getProductById(id: string): Promise<Product | null> {
-    const res = this.db!.exec("SELECT * FROM products WHERE id = ? LIMIT 1", [id]);
-    if (!res.length || !res[0].values.length) return null;
-    return this.rowToObject<Product>(res[0].columns, res[0].values[0]);
+    return this.state.products[id] || null;
   }
 
   public async getProductByBarcodeOrPLU(code: string): Promise<Product | null> {
-    const clean = code.trim();
-    const res = this.db!.exec(
-      "SELECT * FROM products WHERE (barcode = ? OR plu_codigo = ? OR codigo_interno = ?) AND is_deleted = 0 LIMIT 1",
-      [clean, clean, clean]
-    );
-    if (!res.length || !res[0].values.length) return null;
-    return this.rowToObject<Product>(res[0].columns, res[0].values[0]);
+    const clean = code.trim().toLowerCase();
+    return Object.values(this.state.products).find(p => 
+      !p.is_deleted && (
+        p.barcode?.toLowerCase() === clean || 
+        p.plu_codigo?.toLowerCase() === clean || 
+        p.codigo_interno?.toLowerCase() === clean
+      )
+    ) || null;
   }
 
   public async saveProduct(product: Partial<Product> & { name: string; price: number }): Promise<Product> {
     const id = product.id || crypto.randomUUID();
     const now = new Date().toISOString();
-    
-    this.db!.run(
-      `INSERT OR REPLACE INTO products (
-        id, name, price, price_wholesale, wholesale_min_qty, category, image_url, unit,
-        is_available, is_combo, is_featured, is_illustrative, barcode, codigo_interno,
-        plu_codigo, validade_dias, tara_id, stock, custo_medio, ncm, cfop, description,
-        is_deleted, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        product.name,
-        product.price,
-        product.price_wholesale || 0,
-        product.wholesale_min_qty || 0,
-        product.category || 'Geral',
-        product.image_url || null,
-        product.unit || 'kg',
-        product.is_available !== false ? 1 : 0,
-        product.is_combo ? 1 : 0,
-        product.is_featured ? 1 : 0,
-        product.is_illustrative ? 1 : 0,
-        product.barcode || null,
-        product.codigo_interno || null,
-        product.plu_codigo || null,
-        product.validade_dias || 0,
-        product.tara_id || null,
-        product.stock !== undefined ? product.stock : 0,
-        product.custo_medio || 0,
-        product.ncm || '03028990',
-        product.cfop || '5102',
-        product.description || null,
-        product.is_deleted ? 1 : 0,
-        product.created_at || now,
-        now
-      ]
-    );
+    const fullProduct: Product = {
+      id,
+      name: product.name,
+      price: product.price,
+      price_wholesale: product.price_wholesale || 0,
+      wholesale_min_qty: product.wholesale_min_qty || 0,
+      category: product.category || 'Geral',
+      image_url: product.image_url,
+      unit: product.unit || 'kg',
+      is_available: product.is_available !== false,
+      is_combo: !!product.is_combo,
+      is_featured: !!product.is_featured,
+      is_illustrative: !!product.is_illustrative,
+      barcode: product.barcode,
+      codigo_interno: product.codigo_interno,
+      plu_codigo: product.plu_codigo,
+      validade_dias: product.validade_dias || 0,
+      tara_id: product.tara_id,
+      stock: product.stock !== undefined ? product.stock : 0,
+      custo_medio: product.custo_medio || 0,
+      ncm: product.ncm || '03028990',
+      cfop: product.cfop || '5102',
+      description: product.description,
+      is_deleted: !!product.is_deleted,
+      created_at: product.created_at || now,
+      updated_at: now
+    };
+
+    this.state.products[id] = fullProduct;
     await this.persist();
-    return (await this.getProductById(id))!;
+    return fullProduct;
   }
 
   public async deleteProduct(id: string): Promise<void> {
-    this.db!.run("UPDATE products SET is_deleted = 1, updated_at = ? WHERE id = ?", [new Date().toISOString(), id]);
-    await this.persist();
+    if (this.state.products[id]) {
+      this.state.products[id].is_deleted = true;
+      this.state.products[id].updated_at = new Date().toISOString();
+      await this.persist();
+    }
   }
 
   public async updateStock(productId: string, quantityDelta: number): Promise<void> {
-    this.db!.run(
-      "UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?",
-      [quantityDelta, new Date().toISOString(), productId]
-    );
-    await this.persist();
+    if (this.state.products[productId]) {
+      this.state.products[productId].stock += quantityDelta;
+      this.state.products[productId].updated_at = new Date().toISOString();
+      await this.persist();
+    }
   }
 
-  // --- TARAS DE BALANÇA ---
+  // --- TARAS ---
   public async getTaras(): Promise<TaraBalanca[]> {
-    const res = this.db!.exec("SELECT * FROM taras_balanca ORDER BY codigo ASC");
-    if (!res.length) return [];
-    return res[0].values.map(row => this.rowToObject<TaraBalanca>(res[0].columns, row));
+    return Object.values(this.state.taras).sort((a, b) => a.codigo - b.codigo);
   }
 
   public async saveTara(tara: Partial<TaraBalanca> & { codigo: number; descricao: string; peso: number }): Promise<TaraBalanca> {
     const id = tara.id || crypto.randomUUID();
-    this.db!.run(
-      `INSERT OR REPLACE INTO taras_balanca (id, codigo, descricao, peso)
-      VALUES (?, ?, ?, ?)`,
-      [id, tara.codigo, tara.descricao, tara.peso]
-    );
+    const fullTara: TaraBalanca = {
+      id,
+      codigo: tara.codigo,
+      descricao: tara.descricao,
+      peso: tara.peso,
+      created_at: tara.created_at || new Date().toISOString()
+    };
+    this.state.taras[id] = fullTara;
     await this.persist();
-    return { id, codigo: tara.codigo, descricao: tara.descricao, peso: tara.peso };
+    return fullTara;
   }
 
   public async deleteTara(id: string): Promise<void> {
-    this.db!.run("DELETE FROM taras_balanca WHERE id = ?", [id]);
+    delete this.state.taras[id];
     await this.persist();
   }
 
-  // --- CAIXA E TURNO ---
+  // --- CAIXA ---
   public async getCaixaAberto(): Promise<CaixaSessao | null> {
-    const res = this.db!.exec("SELECT * FROM caixas WHERE status = 'aberto' ORDER BY data_abertura DESC LIMIT 1");
-    if (!res.length || !res[0].values.length) return null;
-    return this.rowToObject<CaixaSessao>(res[0].columns, res[0].values[0]);
+    return Object.values(this.state.caixas).find(c => c.status === 'aberto') || null;
   }
 
   public async abrirCaixa(operadorNome: string, valorInicial: number): Promise<CaixaSessao> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    this.db!.run(
-      `INSERT INTO caixas (id, operador_nome, saldo_inicial, status, data_abertura)
-      VALUES (?, ?, ?, 'aberto', ?)`,
-      [id, operadorNome, valorInicial, now]
-    );
+    const novoCaixa: CaixaSessao = {
+      id,
+      operador_nome: operadorNome,
+      saldo_inicial: valorInicial,
+      status: 'aberto',
+      data_abertura: now
+    };
+    this.state.caixas[id] = novoCaixa;
     await this.persist();
-    return (await this.getCaixaAberto())!;
+    return novoCaixa;
   }
 
   public async fecharCaixa(caixaId: string, saldoFinal: number, observacoes?: string): Promise<CaixaSessao> {
-    const now = new Date().toISOString();
-    this.db!.run(
-      `UPDATE caixas SET saldo_final = ?, status = 'fechado', data_fechamento = ?, observacoes = ?
-      WHERE id = ?`,
-      [saldoFinal, now, observacoes || null, caixaId]
-    );
-    await this.persist();
-    const res = this.db!.exec("SELECT * FROM caixas WHERE id = ? LIMIT 1", [caixaId]);
-    return this.rowToObject<CaixaSessao>(res[0].columns, res[0].values[0]);
+    const cx = this.state.caixas[caixaId];
+    if (cx) {
+      cx.saldo_final = saldoFinal;
+      cx.status = 'fechado';
+      cx.data_fechamento = new Date().toISOString();
+      cx.observacoes = observacoes;
+      await this.persist();
+      return cx;
+    }
+    throw new Error('Caixa não encontrado');
   }
 
   public async adicionarMovimentoCaixa(caixaId: string, tipo: 'sangria' | 'suprimento', valor: number, motivo: string): Promise<MovimentoCaixa> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    this.db!.run(
-      `INSERT INTO movimentos_caixa (id, caixa_id, tipo, valor, motivo, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, caixaId, tipo, valor, motivo, now]
-    );
+    const mov: MovimentoCaixa = { id, caixa_id: caixaId, tipo, valor, motivo, created_at: now };
+    this.state.movimentos_caixa[id] = mov;
     await this.persist();
-    return { id, caixa_id: caixaId, tipo, valor, motivo, created_at: now };
+    return mov;
   }
 
   public async getMovimentosCaixa(caixaId: string): Promise<MovimentoCaixa[]> {
-    const res = this.db!.exec("SELECT * FROM movimentos_caixa WHERE caixa_id = ? ORDER BY created_at DESC", [caixaId]);
-    if (!res.length) return [];
-    return res[0].values.map(row => this.rowToObject<MovimentoCaixa>(res[0].columns, row));
+    return Object.values(this.state.movimentos_caixa)
+      .filter(m => m.caixa_id === caixaId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
-  // --- VENDAS PDV ---
+  // --- VENDAS ---
   public async criarVenda(
     vendaData: {
       caixa_id: string;
@@ -323,66 +338,13 @@ export class SQLiteDatabaseService implements IDatabaseService {
     },
     itens: CartItem[]
   ): Promise<Venda> {
-    const vendaId = crypto.randomUUID();
+    const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    
-    // Obter próximo número sequencial da venda
-    const numRes = this.db!.exec("SELECT IFNULL(MAX(numero_venda), 1000) + 1 AS proximo FROM vendas");
-    const numeroVenda = numRes.length && numRes[0].values.length ? Number(numRes[0].values[0][0]) : 1001;
+    const numeroVenda = (this.state.sequence_venda || 1000) + 1;
+    this.state.sequence_venda = numeroVenda;
 
-    this.db!.run(
-      `INSERT INTO vendas (
-        id, numero_venda, caixa_id, cliente_nome, cliente_telefone, subtotal, desconto,
-        acrescimo, valor_final, forma_pagamento, troco, status, observacoes, sync_status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'concluida', ?, 'pending', ?)`,
-      [
-        vendaId,
-        numeroVenda,
-        vendaData.caixa_id,
-        vendaData.cliente_nome || null,
-        vendaData.cliente_telefone || null,
-        vendaData.subtotal,
-        vendaData.desconto,
-        vendaData.acrescimo,
-        vendaData.valor_final,
-        vendaData.forma_pagamento,
-        vendaData.troco || 0,
-        vendaData.observacoes || null,
-        now
-      ]
-    );
-
-    // Salvar itens da venda e abater estoque
-    for (const item of itens) {
-      const itemId = crypto.randomUUID();
-      this.db!.run(
-        `INSERT INTO itens_venda (
-          id, venda_id, produto_id, produto_nome, quantidade, unit, preco_unitario, subtotal, tara_peso
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          itemId,
-          vendaId,
-          item.product.id,
-          item.product.name,
-          item.quantity,
-          item.product.unit || 'kg',
-          item.price_unit,
-          item.subtotal,
-          item.tara_peso || 0
-        ]
-      );
-
-      // Baixa no estoque local
-      this.db!.run(
-        "UPDATE products SET stock = stock - ?, updated_at = ? WHERE id = ?",
-        [item.quantity, now, item.product.id]
-      );
-    }
-
-    await this.persist();
-
-    return {
-      id: vendaId,
+    const venda: Venda = {
+      id,
       numero_venda: numeroVenda,
       caixa_id: vendaData.caixa_id,
       cliente_nome: vendaData.cliente_nome,
@@ -398,174 +360,120 @@ export class SQLiteDatabaseService implements IDatabaseService {
       sync_status: 'pending',
       created_at: now
     };
+
+    this.state.vendas[id] = venda;
+
+    // Salva itens e debita estoque
+    for (const it of itens) {
+      const itemId = crypto.randomUUID();
+      this.state.itens_venda[itemId] = {
+        id: itemId,
+        venda_id: id,
+        produto_id: it.product.id,
+        produto_nome: it.product.name,
+        quantidade: it.quantity,
+        unit: it.product.unit || 'kg',
+        preco_unitario: it.price_unit,
+        subtotal: it.subtotal,
+        tara_peso: it.tara_peso || 0
+      };
+
+      if (this.state.products[it.product.id]) {
+        this.state.products[it.product.id].stock -= it.quantity;
+      }
+    }
+
+    await this.persist();
+    return venda;
   }
 
   public async getVendas(limit: number = 50): Promise<Venda[]> {
-    const res = this.db!.exec("SELECT * FROM vendas ORDER BY created_at DESC LIMIT ?", [limit]);
-    if (!res.length) return [];
-    return res[0].values.map(row => this.rowToObject<Venda>(res[0].columns, row));
+    return Object.values(this.state.vendas)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, limit);
   }
 
   public async getVendasPendentesSync(): Promise<Venda[]> {
-    const res = this.db!.exec("SELECT * FROM vendas WHERE sync_status = 'pending' ORDER BY created_at ASC");
-    if (!res.length) return [];
-    const vendas = res[0].values.map(row => this.rowToObject<Venda>(res[0].columns, row));
-    
-    for (const venda of vendas) {
-      const itemsRes = this.db!.exec("SELECT * FROM itens_venda WHERE venda_id = ?", [venda.id]);
-      if (itemsRes.length) {
-        venda.itens = itemsRes[0].values.map(r => this.rowToObject<ItemVenda>(itemsRes[0].columns, r));
-      }
+    const pendentes = Object.values(this.state.vendas)
+      .filter(v => v.sync_status === 'pending')
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    for (const v of pendentes) {
+      v.itens = Object.values(this.state.itens_venda).filter(i => i.venda_id === v.id);
     }
-    return vendas;
+    return pendentes;
   }
 
   public async marcarVendasSincronizadas(vendaIds: string[]): Promise<void> {
-    if (!vendaIds.length) return;
-    const placeholders = vendaIds.map(() => '?').join(',');
-    this.db!.run(`UPDATE vendas SET sync_status = 'synced' WHERE id IN (${placeholders})`, vendaIds);
+    for (const id of vendaIds) {
+      if (this.state.vendas[id]) {
+        this.state.vendas[id].sync_status = 'synced';
+      }
+    }
     await this.persist();
   }
 
   // --- PEDIDOS ONLINE ---
   public async getPedidosOnline(status?: string): Promise<PedidoOnline[]> {
-    let sql = "SELECT * FROM pedidos_online";
-    const params: any[] = [];
-    if (status && status !== 'all') {
-      sql += " WHERE status = ?";
-      params.push(status);
-    }
-    sql += " ORDER BY created_at DESC";
-
-    const res = this.db!.exec(sql, params);
-    if (!res.length) return [];
-    return res[0].values.map(row => {
-      const obj = this.rowToObject<any>(res[0].columns, row);
-      return {
-        ...obj,
-        itens: JSON.parse(obj.itens_json || '[]')
-      };
-    });
+    return Object.values(this.state.pedidos_online)
+      .filter(p => !status || status === 'all' || p.status === status)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
   public async salvarPedidoOnline(pedido: PedidoOnline): Promise<void> {
-    this.db!.run(
-      `INSERT OR REPLACE INTO pedidos_online (
-        id, numero_pedido, cliente_nome, cliente_telefone, cliente_endereco,
-        tipo_entrega, forma_pagamento, total, status, observacoes, itens_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        pedido.id,
-        pedido.numero_pedido,
-        pedido.cliente_nome,
-        pedido.cliente_telefone,
-        pedido.cliente_endereco || null,
-        pedido.tipo_entrega,
-        pedido.forma_pagamento,
-        pedido.total,
-        pedido.status,
-        pedido.observacoes || null,
-        JSON.stringify(pedido.itens || []),
-        pedido.created_at || new Date().toISOString()
-      ]
-    );
+    this.state.pedidos_online[pedido.id] = pedido;
     await this.persist();
   }
 
   public async atualizarStatusPedidoOnline(pedidoId: string, status: PedidoOnline['status']): Promise<void> {
-    this.db!.run("UPDATE pedidos_online SET status = ? WHERE id = ?", [status, pedidoId]);
-    await this.persist();
+    if (this.state.pedidos_online[pedidoId]) {
+      this.state.pedidos_online[pedidoId].status = status;
+      await this.persist();
+    }
   }
 
-  // --- DASHBOARD MÉTRICAS ---
+  // --- DASHBOARD ---
   public async getDashboardMetrics(): Promise<DashboardMetrics> {
     const hoje = new Date().toISOString().split('T')[0];
-    
-    const vendasHojeRes = this.db!.exec(
-      "SELECT COUNT(*), IFNULL(SUM(valor_final), 0), IFNULL(AVG(valor_final), 0) FROM vendas WHERE date(created_at) = date(?) AND status = 'concluida'",
-      [hoje]
-    );
-    const totalVendasHoje = Number(vendasHojeRes[0]?.values[0]?.[0] || 0);
-    const faturamentoHoje = Number(vendasHojeRes[0]?.values[0]?.[1] || 0);
-    const ticketMedioHoje = Number(vendasHojeRes[0]?.values[0]?.[2] || 0);
+    const vendas = Object.values(this.state.vendas).filter(v => v.status === 'concluida');
+    const vendasHoje = vendas.filter(v => v.created_at.startsWith(hoje));
 
-    const faturamentoMesRes = this.db!.exec(
-      "SELECT IFNULL(SUM(valor_final), 0) FROM vendas WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', ?) AND status = 'concluida'",
-      [hoje]
-    );
-    const faturamentoMes = Number(faturamentoMesRes[0]?.values[0]?.[0] || 0);
+    const totalVendasHoje = vendasHoje.length;
+    const faturamentoHoje = vendasHoje.reduce((acc, v) => acc + v.valor_final, 0);
+    const ticketMedioHoje = totalVendasHoje > 0 ? faturamentoHoje / totalVendasHoje : 0;
+    const mesAtual = hoje.slice(0, 7);
+    const faturamentoMes = vendas.filter(v => v.created_at.startsWith(mesAtual)).reduce((acc, v) => acc + v.valor_final, 0);
 
-    const prodCountRes = this.db!.exec("SELECT COUNT(*) FROM products WHERE is_deleted = 0");
-    const quantidadeProdutos = Number(prodCountRes[0]?.values[0]?.[0] || 0);
-
-    const lowStockRes = this.db!.exec("SELECT * FROM products WHERE is_deleted = 0 AND stock <= 5 ORDER BY stock ASC LIMIT 6");
-    const produtosEstoqueBaixo = lowStockRes.length 
-      ? lowStockRes[0].values.map(r => this.rowToObject<Product>(lowStockRes[0].columns, r))
-      : [];
-
-    const vendasRecentes = await this.getVendas(5);
+    const prods = await this.getProducts();
+    const lowStock = prods.filter(p => p.stock <= 5).slice(0, 6);
 
     return {
       totalVendasHoje,
       faturamentoHoje,
       faturamentoMes,
       ticketMedioHoje,
-      quantidadeProdutos,
-      produtosEstoqueBaixo,
-      vendasRecentes,
+      quantidadeProdutos: prods.length,
+      produtosEstoqueBaixo: lowStock,
+      vendasRecentes: await this.getVendas(5),
       vendasPorFormaPagamento: {},
       vendasUltimosDias: []
     };
   }
 
-  // --- BACKUP & RESTAURAÇÃO ---
+  // --- BACKUP ---
   public async exportDatabaseJSON(): Promise<string> {
-    const config = await this.getConfig();
-    const products = await this.getProducts();
-    const taras = await this.getTaras();
-    const vendas = await this.getVendas(5000);
-    
-    return JSON.stringify({
-      version: '1.0.0',
-      exported_at: new Date().toISOString(),
-      config,
-      products,
-      taras,
-      vendas
-    }, null, 2);
+    return JSON.stringify(this.state, null, 2);
   }
 
   public async importDatabaseJSON(jsonData: string): Promise<void> {
-    const data = JSON.parse(jsonData);
-    if (data.products && Array.isArray(data.products)) {
-      for (const p of data.products) {
-        await this.saveProduct(p);
-      }
-    }
-    if (data.taras && Array.isArray(data.taras)) {
-      for (const t of data.taras) {
-        await this.saveTara(t);
-      }
-    }
+    const parsed = JSON.parse(jsonData);
+    this.state = { ...this.state, ...parsed };
     await this.persist();
   }
 
   public async resetDatabase(): Promise<void> {
-    this.db!.run("DELETE FROM itens_venda; DELETE FROM vendas; DELETE FROM movimentos_caixa; DELETE FROM caixas;");
+    this.state = this.getInitialEmptyState();
     await this.persist();
-  }
-
-  private rowToObject<T>(columns: string[], row: any[]): T {
-    const obj: any = {};
-    columns.forEach((col, idx) => {
-      let val = row[idx];
-      // Converte booleans do SQLite (0/1) para booleanos se o nome começa com is_
-      if (col.startsWith('is_') && typeof val === 'number') {
-        val = val === 1;
-      }
-      obj[col] = val;
-    });
-    return obj as T;
   }
 }
 
