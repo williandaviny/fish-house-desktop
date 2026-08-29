@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "fishhouse-pdv",
-  "version": "0.2.0",
+  "version": "1.0.3",
   "identifier": "com.peixariafishhouse.pdv",
   "build": {
     "frontendDist": "../dist",
@@ -36,7 +36,9 @@
     ],
     "windows": {
       "nsis": {
-        "languages": ["PortugueseBR"],
+        "languages": [
+          "PortugueseBR"
+        ],
         "installMode": "currentUser"
       }
     },
