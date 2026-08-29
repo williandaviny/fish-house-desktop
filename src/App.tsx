@@ -1,66 +1,84 @@
-import React, { useState } from 'react';
-import { DatabaseProvider, useDatabase } from './context/DatabaseContext';
-import { Sidebar } from './components/Sidebar';
-import { Header } from './components/Header';
-import { PDVPage } from './pages/PDVPage';
-import { OnlineOrdersPage } from './pages/OnlineOrdersPage';
-import { ProductsPage } from './pages/ProductsPage';
-import { TarasPage } from './pages/TarasPage';
-import { CashRegisterPage } from './pages/CashRegisterPage';
-import { SyncSettingsPage } from './pages/SyncSettingsPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { Loader2 } from 'lucide-react';
+import React from 'react';
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { CartProvider } from './context/CartContext';
+import { supabase } from './lib/supabase';
+import Home from './pages/Home';
+import CatalogPage from './pages/CatalogPage';
+import BlogPost from './pages/BlogPost';
+import Checkout from './pages/Checkout';
+import AdminOrders from './pages/AdminOrders';
+import AdminDashboard from './pages/AdminDashboard';
+import AdminLogin from './pages/AdminLogin';
+import AdminProducts from './pages/AdminProducts';
+import AdminCustomers from './pages/AdminCustomers';
+import AdminSettings from './pages/AdminSettings';
+import AdminDatabaseCleanup from './pages/AdminDatabaseCleanup';
+import PDV from './pages/PDV';
+import AdminInventory from './pages/AdminInventory';
+import AdminPurchases from './pages/AdminPurchases';
+import AdminFinancial from './pages/AdminFinancial';
+import AdminLayout from './components/AdminLayout';
+import PublicLayout from './components/PublicLayout';
+import TrackingManager from './components/TrackingManager';
+import ProtectedRoute from './components/ProtectedRoute';
+import ScrollToTop from './components/ScrollToTop';
+import { CustomerAuthProvider } from './context/CustomerAuthContext';
+import CustomerLogin from './pages/CustomerLogin';
+import CustomerDashboard from './pages/CustomerDashboard';
+import WholesaleCatalogPage from './pages/WholesaleCatalogPage';
+import WholesaleCheckout from './pages/WholesaleCheckout';
 
-const MainLayout: React.FC = () => {
-  const { isReady } = useDatabase();
-  const [activeTab, setActiveTab] = useState('pdv');
+// __TAURI_BUILD__ é injetado pelo Vite em tempo de compilação
+// É true APENAS quando o build é feito pelo Tauri CLI (pnpm tauri build)
+// Na web, é sempre false — sem nenhuma detecção em tempo de execução
+declare const __TAURI_BUILD__: boolean;
 
-  if (!isReady) {
-    return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-950 text-slate-200">
-        <Loader2 className="w-10 h-10 text-cyan-400 animate-spin mb-4" />
-        <h2 className="text-lg font-bold">Carregando Fish House Desktop...</h2>
-        <p className="text-xs text-slate-500 mt-1">Inicializando banco de dados local SQLite</p>
-      </div>
-    );
-  }
-
-  const getTitle = () => {
-    switch (activeTab) {
-      case 'pdv': return { title: 'Frente de Caixa (PDV)', subtitle: 'Pressione F2 para buscar produtos, F10 para receber' };
-      case 'orders': return { title: 'Pedidos Online & Delivery', subtitle: 'Pedidos sincronizados do site peixariafishhouse.com.br' };
-      case 'products': return { title: 'Catálogo de Produtos', subtitle: 'Cadastro de peixes, frutos do mar, PLU e balança' };
-      case 'taras': return { title: 'Taras de Balança (Toledo)', subtitle: 'Tabela oficial de taras para o MGV 7' };
-      case 'cashier': return { title: 'Controle de Turno & Caixa', subtitle: 'Abertura, fechamento, sangrias e suprimentos' };
-      case 'dashboard': return { title: 'Relatórios Gerenciais', subtitle: 'Métricas de faturamento e vendas' };
-      case 'sync': return { title: 'Sincronização & Nuvem', subtitle: 'Integração Supabase e Backup Local' };
-      default: return { title: 'Fish House Desktop', subtitle: '' };
-    }
-  };
-
-  const headerInfo = getTitle();
-
-  return (
-    <div className="h-screen w-screen flex overflow-hidden bg-slate-900">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <div className="flex-1 flex flex-col min-w-0">
-        <Header title={headerInfo.title} subtitle={headerInfo.subtitle} />
-        {activeTab === 'pdv' && <PDVPage />}
-        {activeTab === 'orders' && <OnlineOrdersPage />}
-        {activeTab === 'products' && <ProductsPage />}
-        {activeTab === 'taras' && <TarasPage />}
-        {activeTab === 'cashier' && <CashRegisterPage />}
-        {activeTab === 'dashboard' && <DashboardPage />}
-        {activeTab === 'sync' && <SyncSettingsPage />}
-      </div>
-    </div>
-  );
-};
+const isDesktop = typeof __TAURI_BUILD__ !== 'undefined' && __TAURI_BUILD__;
+const Router = isDesktop ? HashRouter : BrowserRouter;
 
 export default function App() {
   return (
-    <DatabaseProvider>
-      <MainLayout />
-    </DatabaseProvider>
+    <CartProvider>
+      <CustomerAuthProvider>
+        <TrackingManager />
+        <Router>
+          <ScrollToTop />
+          <Routes>
+            {/* Public Routes - Wrapped in PublicLayout */}
+            <Route 
+              path="/" 
+              element={
+                isDesktop 
+                  ? <Navigate to="/admin/pdv" replace /> 
+                  : <PublicLayout><Home /></PublicLayout>
+              } 
+            />
+            <Route path="/catalogo" element={<PublicLayout><CatalogPage /></PublicLayout>} />
+            <Route path="/checkout" element={<PublicLayout><Checkout /></PublicLayout>} />
+            <Route path="/atacado" element={<PublicLayout><WholesaleCatalogPage /></PublicLayout>} />
+            <Route path="/atacado/checkout" element={<PublicLayout><WholesaleCheckout /></PublicLayout>} />
+            <Route path="/blog" element={<PublicLayout><Home /></PublicLayout>} />
+            <Route path="/blog/:slug" element={<PublicLayout><BlogPost /></PublicLayout>} />
+            
+            {/* Customer Auth Routes */}
+            <Route path="/meus-pedidos" element={<PublicLayout><CustomerDashboard /></PublicLayout>} />
+            <Route path="/verificar" element={<PublicLayout><CustomerLogin /></PublicLayout>} />
+
+            {/* Admin Routes - Completely separate UI */}
+            <Route path="/admin/login" element={<AdminLogin />} />
+            <Route path="/admin" element={<ProtectedRoute><AdminLayout><AdminDashboard /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/pdv" element={<ProtectedRoute><AdminLayout><PDV /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/estoque" element={<ProtectedRoute><AdminLayout><AdminInventory /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/compras" element={<ProtectedRoute><AdminLayout><AdminPurchases /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/financeiro" element={<ProtectedRoute><AdminLayout><AdminFinancial /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/pedidos" element={<ProtectedRoute><AdminLayout><AdminOrders /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/produtos" element={<ProtectedRoute><AdminLayout><AdminProducts /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/clientes" element={<ProtectedRoute><AdminLayout><AdminCustomers /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/config" element={<ProtectedRoute><AdminLayout><AdminSettings /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin/cleanup" element={<ProtectedRoute><AdminLayout><AdminDatabaseCleanup /></AdminLayout></ProtectedRoute>} />
+          </Routes>
+        </Router>
+      </CustomerAuthProvider>
+    </CartProvider>
   );
 }

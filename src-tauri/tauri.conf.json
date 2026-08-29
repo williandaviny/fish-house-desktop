@@ -1,25 +1,23 @@
 {
-  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/tooling/cli/schema.json",
-  "productName": "Fish House Desktop",
-  "version": "1.0.1",
-  "identifier": "br.com.peixariafishhouse.desktop",
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "fishhouse-pdv",
+  "version": "0.2.0",
+  "identifier": "com.peixariafishhouse.pdv",
   "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:3000",
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5174",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
       {
-        "title": "Fish House | PDV & ERP Desktop - Peixaria Premium",
+        "title": "Fish House - Ponto de Venda v0.2.0",
         "width": 1280,
         "height": 800,
-        "minWidth": 960,
-        "minHeight": 640,
-        "center": true,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "url": "http://tauri.localhost/#/admin/pdv"
       }
     ],
     "security": {
@@ -28,28 +26,22 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "nsis"
-    ],
-    "publisher": "Fish House Peixaria Premium",
-    "copyright": "© 2026 Fish House Peixaria Premium. Todos os direitos reservados.",
-    "category": "Business",
-    "shortDescription": "PDV Comercial, Balança Toledo e Controle de Estoque Offline-First",
-    "longDescription": "Fish House Desktop é a solução oficial de frente de caixa (PDV), pesagem Toledo e gestão comercial offline-first para a Peixaria Premium Fish House.",
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.icns",
       "icons/icon.ico"
     ],
     "windows": {
       "nsis": {
-        "installerIcon": "icons/icon.ico",
-        "installMode": "currentUser",
-        "languages": [
-          "PortugueseBR"
-        ]
+        "languages": ["PortugueseBR"],
+        "installMode": "currentUser"
       }
+    },
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
     }
   }
 }
