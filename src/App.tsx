@@ -28,12 +28,16 @@ import CustomerDashboard from './pages/CustomerDashboard';
 import WholesaleCatalogPage from './pages/WholesaleCatalogPage';
 import WholesaleCheckout from './pages/WholesaleCheckout';
 
-// __TAURI_BUILD__ é injetado pelo Vite em tempo de compilação
-// É true APENAS quando o build é feito pelo Tauri CLI (pnpm tauri build)
-// Na web, é sempre false — sem nenhuma detecção em tempo de execução
-declare const __TAURI_BUILD__: boolean;
+// Deteccao confiavel de runtime Desktop (Tauri / Localhost)
+const isDesktop = typeof window !== 'undefined' && (
+  '__TAURI_INTERNALS__' in window ||
+  '__TAURI__' in window ||
+  window.location.protocol === 'tauri:' ||
+  window.location.protocol === 'asset:' ||
+  window.location.protocol === 'file:' ||
+  window.location.hostname === 'tauri.localhost'
+);
 
-const isDesktop = typeof __TAURI_BUILD__ !== 'undefined' && __TAURI_BUILD__;
 const Router = isDesktop ? HashRouter : BrowserRouter;
 
 export default function App() {
@@ -49,7 +53,7 @@ export default function App() {
               path="/" 
               element={
                 isDesktop 
-                  ? <Navigate to="/admin/pdv" replace /> 
+                  ? <Navigate to="/admin" replace /> 
                   : <PublicLayout><Home /></PublicLayout>
               } 
             />

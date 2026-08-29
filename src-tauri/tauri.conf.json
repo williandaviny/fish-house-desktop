@@ -1,8 +1,8 @@
 {
-  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "fishhouse-pdv",
-  "version": "1.0.3",
-  "identifier": "com.peixariafishhouse.pdv",
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/tooling/cli/schema.json",
+  "productName": "Fish House Desktop",
+  "version": "1.0.4",
+  "identifier": "br.com.peixariafishhouse.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
@@ -12,12 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "Fish House - Ponto de Venda v0.2.0",
+        "title": "Fish House | Gestão Comercial & PDV - Peixaria Premium",
         "width": 1280,
         "height": 800,
+        "minWidth": 960,
+        "minHeight": 640,
+        "center": true,
         "resizable": true,
-        "fullscreen": false,
-        "url": "http://tauri.localhost/#/admin/pdv"
+        "fullscreen": false
       }
     ],
     "security": {
@@ -26,7 +28,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "Fish House Peixaria Premium",
+    "copyright": "© 2026 Fish House Peixaria Premium. Todos os direitos reservados.",
+    "category": "Business",
+    "shortDescription": "Sistema de Gestão Comercial, PDV e Estoque",
+    "longDescription": "Fish House Desktop é a solução comercial completa para a Fish House Peixaria Premium.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,14 +45,12 @@
     ],
     "windows": {
       "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
         "languages": [
           "PortugueseBR"
-        ],
-        "installMode": "currentUser"
+        ]
       }
-    },
-    "android": {
-      "debugApplicationIdSuffix": ".debug"
     }
   }
 }
