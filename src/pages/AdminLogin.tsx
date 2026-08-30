@@ -7,9 +7,25 @@ import { Lock, Mail, Fish, AlertCircle, ShoppingBag } from 'lucide-react';
 export default function AdminLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  React.useEffect(() => {
+    // Se ja possui sessao ativa no computador, redireciona direto
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        navigate('/admin');
+      }
+    });
+
+    const savedEmail = localStorage.getItem('fishhouse_saved_email');
+    if (savedEmail) {
+      setEmail(savedEmail);
+      setRememberMe(true);
+    }
+  }, [navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,6 +41,12 @@ export default function AdminLogin() {
       setError('E-mail ou senha incorretos. Verifique suas credenciais.');
       setLoading(false);
       return;
+    }
+
+    if (rememberMe) {
+      localStorage.setItem('fishhouse_saved_email', email);
+    } else {
+      localStorage.removeItem('fishhouse_saved_email');
     }
 
     navigate('/admin');
@@ -92,6 +114,18 @@ export default function AdminLogin() {
                   required
                 />
               </div>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+              <label className="flex items-center gap-3 cursor-pointer select-none text-xs font-bold text-gray-400 hover:text-white transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={rememberMe} 
+                  onChange={e => setRememberMe(e.target.checked)} 
+                  className="w-4 h-4 rounded-md border-white/20 bg-ink-950 text-gold-500 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-gold-500"
+                />
+                <span>Lembrar credenciais e manter conectado</span>
+              </label>
             </div>
 
             <button 

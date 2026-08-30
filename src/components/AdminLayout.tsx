@@ -30,6 +30,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 import SyncStatusBadge from './SyncStatusBadge';
 import InitialSyncModal from './InitialSyncModal';
+import { UpdateModal } from './UpdateModal';
 
 interface Notification {
   id: string;
@@ -212,6 +213,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     <div className="min-h-screen bg-ink-950 text-white flex overflow-x-hidden">
       {/* Initial Local Database Sync Modal */}
       <InitialSyncModal />
+      {/* Automatic Background Updater Modal */}
+      <UpdateModal />
 
       {/* Sidebar Mobile Backdrop */}
       <AnimatePresence>
