@@ -29,6 +29,7 @@ import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
 import SyncStatusBadge from './SyncStatusBadge';
+import InitialSyncModal from './InitialSyncModal';
 
 interface Notification {
   id: string;
@@ -209,6 +210,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   return (
     <div className="min-h-screen bg-ink-950 text-white flex overflow-x-hidden">
+      {/* Initial Local Database Sync Modal */}
+      <InitialSyncModal />
+
       {/* Sidebar Mobile Backdrop */}
       <AnimatePresence>
         {isSidebarOpen && (
