@@ -725,12 +725,11 @@ export default function PDV() {
       const res = await downloadFiscalDocumentBlob(invoiceIdOrUrl, 'pdf', saleId);
       if (res) {
         triggerPrintAndDownload(res.blobUrl, res.filename, true);
-      } else {
-        alert('NFC-e Autorizada pela SEFAZ! O PDF está disponível para consulta no Painel Fiscal.');
       }
+      await handlePrintReceipt(saleId);
     } catch (err: any) {
       console.error('Erro ao baixar PDF:', err);
-      alert('NFC-e Autorizada! Você pode imprimir o PDF pelo Painel Fiscal.');
+      await handlePrintReceipt(saleId);
     }
   };
 

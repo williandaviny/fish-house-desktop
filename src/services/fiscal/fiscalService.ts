@@ -159,23 +159,13 @@ export function triggerPrintAndDownload(blobUrl: string, filename: string, autoP
   link.click();
   document.body.removeChild(link);
 
-  // 2. Diálogo de impressão térmica/A4 via iframe
+  // 2. Abre a visualização e impressão do PDF
   if (autoPrint) {
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = '0';
-    iframe.src = blobUrl;
-    document.body.appendChild(iframe);
-    iframe.onload = () => {
-      try {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-        setTimeout(() => document.body.removeChild(iframe), 4000);
-      } catch (_) {}
-    };
+    try {
+      const printWin = window.open(blobUrl, '_blank', 'width=900,height=800,menubar=no,toolbar=no,location=no');
+      if (printWin) {
+        printWin.focus();
+      }
+    } catch (_) {}
   }
 }
