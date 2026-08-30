@@ -454,27 +454,34 @@ export default function AdminProducts() {
 
     let savedProductId = idToSave;
 
-    if (isEditing) {
-      const { error } = await supabase
-        .from('products')
-        .update(productToSave)
-        .eq('id', idToSave);
-      if (error) {
-        alert('Erro ao atualizar: ' + error.message);
-        setIsSubmitting(false);
-        return;
+    try {
+      if (isEditing) {
+        const { error } = await supabase
+          .from('products')
+          .update(productToSave)
+          .eq('id', idToSave);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from('products')
+          .insert([productToSave])
+          .select();
+        if (error) throw error;
+        if (data && data[0]) {
+          savedProductId = data[0].id;
+        }
       }
-    } else {
-      const { data, error } = await supabase
-        .from('products')
-        .insert([productToSave])
-        .select();
-      if (error) {
-        alert('Erro ao criar: ' + error.message);
-        setIsSubmitting(false);
-        return;
+    } catch (saveErr: any) {
+      console.warn('[AdminProducts] Falha de conexão na nuvem, salvando no banco local:', saveErr);
+      if (!savedProductId) {
+        savedProductId = crypto.randomUUID();
       }
-      savedProductId = data[0].id;
+      // Adiciona na fila de sincronização
+      localDb.addToSyncQueue({
+        table: 'products',
+        action: isEditing ? 'update' : 'insert',
+        data: { ...productToSave, id: savedProductId }
+      });
     }
 
     // Sincroniza estoque na tabela saldos_estoque (local loja)
