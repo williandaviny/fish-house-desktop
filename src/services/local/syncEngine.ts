@@ -47,7 +47,10 @@ class SyncEngine {
         .order('name');
 
       if (prodErr) throw prodErr;
-      if (prods) localDb.setProducts(prods);
+      if (prods) {
+        const activeOnly = prods.filter((p: any) => p.is_deleted !== true);
+        localDb.setProducts(activeOnly);
+      }
 
       // 2. Taras de Balança
       const { data: taras } = await supabase

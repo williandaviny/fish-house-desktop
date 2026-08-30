@@ -316,18 +316,19 @@ export default function AdminInventory() {
   const fetchInitialData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch products
+      // 1. Fetch products (ignoring deleted products)
       const { data: prods, error: prodErr } = await supabase
         .from('products')
-        .select('id, name, category, unit, image_url, price, plu_codigo, barcode, is_available')
+        .select('id, name, category, unit, image_url, price, plu_codigo, barcode, is_available, is_deleted')
         .order('name');
       
       if (prodErr) throw prodErr;
-      setProducts(prods || []);
+      const activeProds = (prods || []).filter((p: any) => p.is_deleted !== true);
+      setProducts(activeProds);
 
       // Extract unique categories
-      if (prods) {
-        const cats = Array.from(new Set(prods.map(p => p.category))).filter(Boolean);
+      if (activeProds) {
+        const cats = Array.from(new Set(activeProds.map(p => p.category))).filter(Boolean);
         setCategories(cats);
       }
 
