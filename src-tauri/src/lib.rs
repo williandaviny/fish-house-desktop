@@ -72,7 +72,7 @@ async fn download_and_install_update(app: AppHandle, url: String) -> Result<(), 
         let bat_content = format!(
             "@echo off\r\n\
             timeout /t 1 /nobreak > nul\r\n\
-            taskkill /F /IM \"Fish House Desktop.exe\" > nul 2>&1\r\n\
+            taskkill /F /IM \"app.exe\" /IM \"Fish House Desktop.exe\" > nul 2>&1\r\n\
             timeout /t 1 /nobreak > nul\r\n\
             start /wait \"\" \"{installer}\" /S\r\n\
             timeout /t 1 /nobreak > nul\r\n\
