@@ -656,32 +656,66 @@ export default function PDV() {
       const invoiceId = data.doc?.id || data.doc?.flowId;
       let pdfUrlToOpen = data.doc?.pdfUrl || data.doc?.pdf || data.doc?.urlPdf;
 
-      // 3. Smart fast polling (checks every 1s, opens immediately when SEFAZ authorizes)
-      let docData: any = null;
-      for (let attempt = 0; attempt < 8; attempt++) {
-        await new Promise(r => setTimeout(r, 1000));
-        
-        const { data: currentDoc } = await supabase
-          .from('documentos_fiscais')
-          .select('id, status, pdf_url, erro_retorno, created_at')
-          .eq('referencia_id', saleId)
-          .eq('referencia_tipo', 'venda')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (currentDoc) {
-          docData = currentDoc;
-          if (currentDoc.pdf_url) pdfUrlToOpen = currentDoc.pdf_url;
-          if (currentDoc.status === 'emitido' || currentDoc.status === 'rejeitado' || currentDoc.erro_retorno || currentDoc.pdf_url) {
-            break;
-          }
-        }
+      // Se a Edge Function já retornou PDF na resposta, abre imediatamente
+      if (pdfUrlToOpen) {
+        openNfcePdf(pdfUrlToOpen, saleId);
+        return;
       }
+
+      // 3. Supabase Realtime: reage instantaneamente quando a SEFAZ autoriza
+      //    Sem delay artificial — dispara exatamente quando o banco é atualizado.
+      const docData: any = await new Promise((resolve) => {
+        const channel = supabase
+          .channel(`nfce-${saleId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'documentos_fiscais',
+              filter: `referencia_id=eq.${saleId}`,
+            },
+            (payload: any) => {
+              const doc = payload.new;
+              if (doc && (doc.pdf_url || doc.status === 'emitido' || doc.status === 'rejeitado' || doc.erro_retorno)) {
+                supabase.removeChannel(channel);
+                resolve(doc);
+              }
+            }
+          )
+          .subscribe();
+
+        // Fallback: consulta ativa a cada 1,5s (caso o realtime não dispare a tempo)
+        let attempts = 0;
+        const fallbackInterval = setInterval(async () => {
+          attempts++;
+          const { data: currentDoc } = await supabase
+            .from('documentos_fiscais')
+            .select('id, status, pdf_url, erro_retorno, created_at')
+            .eq('referencia_id', saleId)
+            .eq('referencia_tipo', 'venda')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (currentDoc && (currentDoc.pdf_url || currentDoc.status === 'emitido' || currentDoc.status === 'rejeitado' || currentDoc.erro_retorno)) {
+            clearInterval(fallbackInterval);
+            supabase.removeChannel(channel);
+            resolve(currentDoc);
+          } else if (attempts >= 10) {
+            // Timeout de 15 segundos máximo
+            clearInterval(fallbackInterval);
+            supabase.removeChannel(channel);
+            resolve(currentDoc || null);
+          }
+        }, 1500);
+      });
 
       if (docData?.status === 'rejeitado' || docData?.erro_retorno) {
         throw new Error(`REJEIÇÃO SEFAZ: ${docData.erro_retorno || 'Nota rejeitada pela SEFAZ.'}`);
       }
+
+      pdfUrlToOpen = docData?.pdf_url || pdfUrlToOpen;
 
       if (!pdfUrlToOpen && invoiceId) {
         const { data: fileRes } = await supabase.functions.invoke('nfe-io-invoice', {
@@ -701,38 +735,42 @@ export default function PDV() {
       }
 
       if (pdfUrlToOpen) {
-        // 1. Trigger download
-        const link = document.createElement('a');
-        link.href = pdfUrlToOpen;
-        link.download = `NFCe_${saleId.slice(0, 8)}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-
-        // 2. Open print preview in iframe
-        const iframe = document.createElement('iframe');
-        iframe.style.position = 'fixed';
-        iframe.style.right = '0';
-        iframe.style.bottom = '0';
-        iframe.style.width = '0';
-        iframe.style.height = '0';
-        iframe.style.border = '0';
-        iframe.src = pdfUrlToOpen;
-        document.body.appendChild(iframe);
-        iframe.onload = () => {
-          try {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-          } catch (_) {}
-        };
+        openNfcePdf(pdfUrlToOpen, saleId);
       } else {
-        alert('NFC-e enviada à SEFAZ! O documento está sendo processado pela SEFAZ e você pode consultá-lo a qualquer momento na aba Financeiro ➔ Fiscal.');
+        alert('NFC-e enviada à SEFAZ! O documento está sendo processado e você pode consultá-lo na aba Financeiro ➔ Fiscal.');
       }
     } catch (err: any) {
       alert('⚠️ ' + err.message);
     } finally {
       setIsEmittingNfce(false);
     }
+  };
+
+  const openNfcePdf = (pdfUrl: string, saleId: string) => {
+    // 1. Trigger download
+    const link = document.createElement('a');
+    link.href = pdfUrl;
+    link.download = `NFCe_${saleId.slice(0, 8)}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // 2. Open print preview in iframe (works inside Tauri/desktop without window.open)
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.src = pdfUrl;
+    document.body.appendChild(iframe);
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (_) {}
+    };
   };
 
   const handlePrintReceipt = async (saleId: string) => {
