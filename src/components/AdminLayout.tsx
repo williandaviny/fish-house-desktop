@@ -209,6 +209,14 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     { name: 'Limpeza de Dados', icon: Database, path: '/admin/cleanup' },
   ];
 
+  const handleNav = (path: string) => {
+    navigate(path);
+    if (typeof window !== 'undefined') {
+      window.location.hash = path;
+    }
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
   return (
     <div className="min-h-screen bg-ink-950 text-white flex overflow-x-hidden">
       {/* Initial Local Database Sync Modal */}
@@ -252,21 +260,17 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
         <nav className="flex-1 px-4 py-6 space-y-2 min-w-[256px] overflow-y-auto custom-scrollbar">
           {menuItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = location.pathname === item.path || (item.path !== '/admin' && location.pathname.startsWith(item.path));
             const Icon = item.icon;
             
             return (
-              <Link
+              <button
                 key={item.path}
-                to={item.path}
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate(item.path);
-                  if (window.innerWidth < 768) setIsSidebarOpen(false);
-                }}
-                className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all group ${
+                type="button"
+                onClick={() => handleNav(item.path)}
+                className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all group text-left cursor-pointer ${
                   isActive 
-                  ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10' 
+                  ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10 font-bold' 
                   : 'text-gray-400 hover:text-white hover:bg-white/5'
                 }`}
               >
@@ -275,7 +279,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                   <span className="font-medium whitespace-nowrap flex-1">{item.name}</span>
                 )}
                 {isActive && isSidebarOpen && <ChevronRight className="w-4 h-4 opacity-50" />}
-              </Link>
+              </button>
             );
           })}
         </nav>
