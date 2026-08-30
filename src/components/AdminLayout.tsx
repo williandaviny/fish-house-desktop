@@ -218,80 +218,87 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-ink-950 text-white flex overflow-x-hidden">
+    <div className="min-h-screen bg-ink-950 text-white flex overflow-hidden" style={{ position: 'relative' }}>
       {/* Initial Local Database Sync Modal */}
       <InitialSyncModal />
       {/* Automatic Background Updater Modal */}
       <UpdateModal />
 
       {/* Sidebar Mobile Backdrop */}
-      <AnimatePresence>
-        {isSidebarOpen && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setIsSidebarOpen(false)}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] md:hidden"
-          />
-        )}
-      </AnimatePresence>
+      {isSidebarOpen && (
+        <div
+          onClick={() => setIsSidebarOpen(false)}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] md:hidden"
+          style={{ pointerEvents: 'auto' }}
+        />
+      )}
 
-      {/* Sidebar */}
-      <aside 
-        className={`fixed md:relative z-[70] h-screen transition-all duration-300 bg-ink-900 border-r border-white/10 flex flex-col ${
-          isSidebarOpen ? 'w-64 translate-x-0' : 'w-0 -translate-x-full md:w-20 md:translate-x-0'
-        } overflow-hidden`}
+      {/* Sidebar — uses a fixed drawer on mobile, shrinks on desktop */}
+      <aside
+        style={{
+          width: isSidebarOpen ? '256px' : '0px',
+          minWidth: isSidebarOpen ? '256px' : '0px',
+          overflow: 'hidden',
+          transition: 'width 300ms ease, min-width 300ms ease',
+          pointerEvents: isSidebarOpen ? 'auto' : 'none',
+          flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'var(--color-ink-900, #0f1117)',
+          borderRight: '1px solid rgba(255,255,255,0.1)',
+          height: '100vh',
+          position: 'sticky',
+          top: 0,
+          zIndex: 70,
+        }}
       >
-        <div className="p-6 flex items-center justify-between min-w-[256px]">
-          <div className={`flex items-center gap-3 overflow-hidden ${!isSidebarOpen && 'justify-center w-full'}`}>
-            <div className="w-10 h-10 bg-gold-500 rounded-xl flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(207,161,74,0.3)]">
-              <Fish className="text-ink-950 w-6 h-6" />
-            </div>
-            {isSidebarOpen && (
+        {/* Sidebar inner — fixed 256px width so content never overflows */}
+        <div style={{ width: '256px', display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div className="p-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gold-500 rounded-xl flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(207,161,74,0.3)]">
+                <Fish className="text-ink-950 w-6 h-6" />
+              </div>
               <span className="font-display font-bold text-xl tracking-tight whitespace-nowrap">Fish Admin</span>
-            )}
+            </div>
+            <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-2 text-gray-500 hover:text-white">
+              <X className="w-6 h-6" />
+            </button>
           </div>
-          {/* Mobile Close Button */}
-          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-2 text-gray-500 hover:text-white">
-            <X className="w-6 h-6" />
-          </button>
-        </div>
 
-        <nav className="flex-1 px-4 py-6 space-y-2 min-w-[256px] overflow-y-auto custom-scrollbar">
-          {menuItems.map((item) => {
-            const isActive = location.pathname === item.path || (item.path !== '/admin' && location.pathname.startsWith(item.path));
-            const Icon = item.icon;
-            
-            return (
-              <button
-                key={item.path}
-                type="button"
-                onClick={() => handleNav(item.path)}
-                className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all group text-left cursor-pointer ${
-                  isActive 
-                  ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10 font-bold' 
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-ink-950' : 'group-hover:text-gold-500'}`} />
-                {(isSidebarOpen || window.innerWidth < 768) && (
+          <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto custom-scrollbar">
+            {menuItems.map((item) => {
+              const isActive = location.pathname === item.path || (item.path !== '/admin' && location.pathname.startsWith(item.path));
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.path}
+                  type="button"
+                  onClick={() => handleNav(item.path)}
+                  style={{ pointerEvents: 'auto' }}
+                  className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all group text-left cursor-pointer ${
+                    isActive
+                    ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10 font-bold'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-ink-950' : 'group-hover:text-gold-500'}`} />
                   <span className="font-medium whitespace-nowrap flex-1">{item.name}</span>
-                )}
-                {isActive && isSidebarOpen && <ChevronRight className="w-4 h-4 opacity-50" />}
-              </button>
-            );
-          })}
-        </nav>
+                  {isActive && <ChevronRight className="w-4 h-4 opacity-50" />}
+                </button>
+              );
+            })}
+          </nav>
 
-        <div className="p-4 border-t border-white/10 min-w-[256px]">
-          <button 
-            onClick={handleLogout}
-            className="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-gray-400 hover:text-red-400 hover:bg-red-400/5 transition-all text-left"
-          >
-            <LogOut className="w-5 h-5 shrink-0" />
-            {isSidebarOpen && <span className="font-medium text-sm">Encerrar Sessão</span>}
-          </button>
+          <div className="p-4 border-t border-white/10">
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-gray-400 hover:text-red-400 hover:bg-red-400/5 transition-all text-left"
+            >
+              <LogOut className="w-5 h-5 shrink-0" />
+              <span className="font-medium text-sm">Encerrar Sessão</span>
+            </button>
+          </div>
         </div>
       </aside>
 
