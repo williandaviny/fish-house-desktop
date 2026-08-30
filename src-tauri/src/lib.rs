@@ -63,24 +63,17 @@ async fn download_and_install_update(app: AppHandle, url: String) -> Result<(), 
 
     let _ = app.emit("update-progress", 100);
 
-    // Cria script de transição silenciosa que roda o instalador NSIS (/S) e reabre o app atualizado
+    // Executa o instalador da nova versão e encerra o app atual para permitir a substituição
     #[cfg(target_os = "windows")]
     {
         let installer_str = installer_path.to_string_lossy().to_string();
-        let current_exe_str = current_exe.to_string_lossy().to_string();
 
         let bat_content = format!(
             "@echo off\r\n\
             timeout /t 1 /nobreak > nul\r\n\
-            taskkill /F /IM \"app.exe\" /IM \"Fish House Desktop.exe\" > nul 2>&1\r\n\
-            timeout /t 1 /nobreak > nul\r\n\
-            start /wait \"\" \"{installer}\" /S\r\n\
-            timeout /t 1 /nobreak > nul\r\n\
-            start \"\" \"{exe}\"\r\n\
-            del \"{installer}\"\r\n\
+            start \"\" \"{installer}\"\r\n\
             (goto) 2>nul & del \"%~f0\"\r\n",
-            installer = installer_str,
-            exe = current_exe_str
+            installer = installer_str
         );
 
         let mut bat_file = File::create(&script_path).map_err(|e| e.to_string())?;

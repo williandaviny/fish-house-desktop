@@ -169,10 +169,24 @@ export const localDb = {
     setItem(STORAGE_KEYS.SYNC_QUEUE, queue);
   },
 
-  enqueueSync(item: LocalSyncItem): void {
+  enqueueSync(item: LocalSyncItem | any): void {
     const queue = this.getSyncQueue();
-    queue.push(item);
+    const formattedItem: LocalSyncItem = {
+      id: item.id || `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      type: item.type || (item.table === 'products' ? 'product_update' : 'sale'),
+      payload: item.payload || item.data || item,
+      created_at: item.created_at || new Date().toISOString()
+    };
+    queue.push(formattedItem);
     this.setSyncQueue(queue);
+  },
+
+  addToSyncQueue(item: any): void {
+    this.enqueueSync(item);
+  },
+
+  clearSyncQueue(): void {
+    this.setSyncQueue([]);
   },
 
   removeFromSyncQueue(ids: string[]): void {

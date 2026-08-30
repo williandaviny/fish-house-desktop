@@ -7,7 +7,7 @@ export interface UpdateInfo {
   publishedAt?: string;
 }
 
-export const APP_VERSION = '1.3.3';
+export const APP_VERSION = '1.3.4';
 const GITHUB_REPO = 'williandaviny/fish-house-desktop';
 
 export class UpdaterService {

@@ -103,37 +103,36 @@ class SyncEngine {
       // 1. Enviar vendas e atualizações locais para o Supabase
       for (const item of queue) {
         try {
-          if (item.type === 'sale') {
-            const { order, items } = item.payload;
-            
-            // Cria o pedido no Supabase
-            const { data: orderRes, error: orderErr } = await supabase
-              .from('pedidos')
-              .insert([order])
-              .select()
-              .single();
-
-            if (orderErr) {
-              console.error('[SyncEngine] Erro ao subir venda:', orderErr);
-              continue;
+          if (item.type === 'product_update' || item.payload?.name || item.payload?.price !== undefined) {
+            const product = item.payload?.data || item.payload;
+            if (product && product.name) {
+              await supabase.from('products').upsert(product);
             }
-
-            if (orderRes && items && items.length > 0) {
-              const formattedItems = items.map((it: any) => ({
-                ...it,
-                order_id: orderRes.id
-              }));
-              await supabase.from('order_items').insert(formattedItems);
-            }
-
             syncedIds.push(item.id);
-          } else if (item.type === 'product_update') {
-            const product = item.payload;
-            await supabase.from('products').upsert(product);
+          } else if (item.type === 'sale') {
+            const { order, items } = item.payload || {};
+            if (order) {
+              const { data: orderRes, error: orderErr } = await supabase
+                .from('pedidos')
+                .insert([order])
+                .select()
+                .single();
+
+              if (!orderErr && orderRes && items && items.length > 0) {
+                const formattedItems = items.map((it: any) => ({
+                  ...it,
+                  order_id: orderRes.id
+                }));
+                await supabase.from('order_items').insert(formattedItems);
+              }
+            }
+            syncedIds.push(item.id);
+          } else {
             syncedIds.push(item.id);
           }
         } catch (itemErr) {
           console.error('[SyncEngine] Falha ao sincronizar item:', item, itemErr);
+          syncedIds.push(item.id); // Remove item com erro para desobstruir a fila
         }
       }
 
