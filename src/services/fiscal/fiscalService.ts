@@ -148,24 +148,46 @@ export async function downloadFiscalDocumentBlob(
 }
 
 /**
- * Dispara o download do arquivo e abre o diálogo de impressão
+ * Abre o PDF fiscal em uma janela dedicada e dispara o diálogo de impressão automaticamente.
+ * Usa um wrapper HTML para garantir que window.print() funcione no Edge WebView2.
  */
 export function triggerPrintAndDownload(blobUrl: string, filename: string, autoPrint = true) {
-  // 1. Download local do arquivo
-  const link = document.createElement('a');
-  link.href = blobUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  try {
+    // Cria um HTML wrapper que embute o PDF via <embed> e chama window.print()
+    // Isso funciona de forma confiável no Edge WebView2 onde iframe+print() é bloqueado
+    const printHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <title>${filename}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { width: 100vw; height: 100vh; overflow: hidden; background: #525659; }
+    embed { width: 100%; height: 100%; border: none; }
+  </style>
+</head>
+<body>
+  <embed src="${blobUrl}" type="application/pdf" width="100%" height="100%" />
+  <script>
+    // Aguarda o PDF carregar e dispara a impressão
+    setTimeout(function() {
+      try { window.print(); } catch(e) { console.warn('print bloqueado:', e); }
+    }, 800);
+  </script>
+</body>
+</html>`;
 
-  // 2. Abre a visualização e impressão do PDF
-  if (autoPrint) {
-    try {
-      const printWin = window.open(blobUrl, '_blank', 'width=900,height=800,menubar=no,toolbar=no,location=no');
-      if (printWin) {
-        printWin.focus();
-      }
-    } catch (_) {}
+    const htmlBlob = new Blob([printHtml], { type: 'text/html' });
+    const htmlUrl = URL.createObjectURL(htmlBlob);
+
+    const printWin = window.open(htmlUrl, '_blank', 'width=900,height=750,menubar=no,toolbar=no,location=no,status=no');
+    if (printWin) {
+      printWin.focus();
+      // Limpa a URL do wrapper HTML após abrir (o PDF blob continua vivo)
+      setTimeout(() => URL.revokeObjectURL(htmlUrl), 10000);
+    }
+  } catch (err) {
+    console.error('[FiscalService] Erro ao abrir janela de impressão:', err);
+    // Fallback: abre o PDF diretamente
+    window.open(blobUrl, '_blank');
   }
 }

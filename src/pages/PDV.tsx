@@ -678,7 +678,7 @@ export default function PDV() {
           )
           .subscribe();
 
-        // Fallback: consulta ativa a cada 1,5s
+        // Fallback: consulta ativa a cada 800ms (mais rápido)
         let attempts = 0;
         const fallbackInterval = setInterval(async () => {
           attempts++;
@@ -695,12 +695,12 @@ export default function PDV() {
             clearInterval(fallbackInterval);
             supabase.removeChannel(channel);
             resolve(currentDoc);
-          } else if (attempts >= 10) {
+          } else if (attempts >= 8) {
             clearInterval(fallbackInterval);
             supabase.removeChannel(channel);
             resolve(currentDoc || null);
           }
-        }, 1500);
+        }, 800);
       });
 
       if (docData?.status === 'rejeitado' || docData?.erro_retorno) {
@@ -724,11 +724,15 @@ export default function PDV() {
     try {
       const res = await downloadFiscalDocumentBlob(invoiceIdOrUrl, 'pdf', saleId);
       if (res) {
+        // Abre o PDF OFICIAL da SEFAZ com diálogo de impressão automático
         triggerPrintAndDownload(res.blobUrl, res.filename, true);
+      } else {
+        // Se não conseguiu o PDF, imprime o cupom interno como fallback
+        await handlePrintReceipt(saleId);
       }
-      await handlePrintReceipt(saleId);
     } catch (err: any) {
-      console.error('Erro ao baixar PDF:', err);
+      console.error('Erro ao baixar PDF SEFAZ:', err);
+      // Fallback: cupom interno
       await handlePrintReceipt(saleId);
     }
   };
