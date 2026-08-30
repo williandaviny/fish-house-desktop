@@ -352,8 +352,8 @@ export default function AdminFinancial() {
     try {
       const res = await downloadFiscalDocumentBlob(invoiceIdOrChave, format, vendaObj?.id);
       if (res) {
-        triggerPrintAndDownload(res.blobUrl, res.filename, format === 'pdf');
-        showNotification('success', `${format.toUpperCase()} baixado com sucesso! ✨`);
+        triggerPrintAndDownload(res.blobUrl, res.filename, res.directUrl);
+        showNotification('success', `${format.toUpperCase()} aberto com sucesso! ✨`);
       } else {
         showNotification('error', `Não foi possível obter o ${format.toUpperCase()} da SEFAZ no momento.`);
       }

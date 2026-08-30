@@ -654,64 +654,19 @@ export default function PDV() {
         throw new Error(data.error || data.message || 'Erro ao emitir NFC-e na SEFAZ');
       }
 
-      const invoiceId = data.doc?.id || data.doc?.flowId;
+      const invoiceDoc = data.doc;
+      const invoiceId = invoiceDoc?.id || invoiceDoc?.flowId;
 
-      // 3. Supabase Realtime: reage instantaneamente quando a SEFAZ autoriza
-      const docData: any = await new Promise((resolve) => {
-        const channel = supabase
-          .channel(`nfce-${saleId}`)
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'documentos_fiscais',
-              filter: `referencia_id=eq.${saleId}`,
-            },
-            (payload: any) => {
-              const doc = payload.new;
-              if (doc && (doc.pdf_url || doc.status === 'emitido' || doc.status === 'rejeitado' || doc.erro_retorno)) {
-                supabase.removeChannel(channel);
-                resolve(doc);
-              }
-            }
-          )
-          .subscribe();
+      // 3. Dispara IMEDIATAMENTE a impressão do DANFE NFC-e oficial na impressora térmica
+      await handlePrintReceipt(saleId, invoiceDoc);
 
-        // Fallback: consulta ativa a cada 800ms (mais rápido)
-        let attempts = 0;
-        const fallbackInterval = setInterval(async () => {
-          attempts++;
-          const { data: currentDoc } = await supabase
-            .from('documentos_fiscais')
-            .select('id, status, pdf_url, erro_retorno, created_at, chave')
-            .eq('referencia_id', saleId)
-            .eq('referencia_tipo', 'venda')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (currentDoc && (currentDoc.pdf_url || currentDoc.status === 'emitido' || currentDoc.status === 'rejeitado' || currentDoc.erro_retorno)) {
-            clearInterval(fallbackInterval);
-            supabase.removeChannel(channel);
-            resolve(currentDoc);
-          } else if (attempts >= 8) {
-            clearInterval(fallbackInterval);
-            supabase.removeChannel(channel);
-            resolve(currentDoc || null);
+      // 4. Em paralelo, obtém e abre o PDF oficial da SEFAZ
+      if (invoiceId) {
+        downloadFiscalDocumentBlob(invoiceId, 'pdf', saleId).then(res => {
+          if (res) {
+            triggerPrintAndDownload(res.blobUrl, res.filename, res.directUrl);
           }
-        }, 800);
-      });
-
-      if (docData?.status === 'rejeitado' || docData?.erro_retorno) {
-        throw new Error(`REJEIÇÃO SEFAZ: ${docData.erro_retorno || 'Nota rejeitada pela SEFAZ.'}`);
-      }
-
-      const targetDocId = docData?.chave || docData?.id || invoiceId;
-      if (targetDocId) {
-        await resolveAndPrintPdf(targetDocId, saleId);
-      } else {
-        alert('NFC-e enviada à SEFAZ! O documento está sendo processado e você pode consultá-lo na aba Financeiro ➔ Fiscal.');
+        }).catch(err => console.warn('PDF background fetch:', err));
       }
     } catch (err: any) {
       alert('⚠️ ' + err.message);
@@ -720,99 +675,155 @@ export default function PDV() {
     }
   };
 
-  const resolveAndPrintPdf = async (invoiceIdOrUrl: string, saleId: string) => {
-    try {
-      const res = await downloadFiscalDocumentBlob(invoiceIdOrUrl, 'pdf', saleId);
-      if (res) {
-        // Abre o PDF OFICIAL da SEFAZ com diálogo de impressão automático
-        triggerPrintAndDownload(res.blobUrl, res.filename, true);
-      } else {
-        // Se não conseguiu o PDF, imprime o cupom interno como fallback
-        await handlePrintReceipt(saleId);
-      }
-    } catch (err: any) {
-      console.error('Erro ao baixar PDF SEFAZ:', err);
-      // Fallback: cupom interno
-      await handlePrintReceipt(saleId);
-    }
-  };
-
-  const handlePrintReceipt = async (saleId: string) => {
+  const handlePrintReceipt = async (saleId: string, fiscalDoc?: any) => {
     // Fetch sale details
-    const { data: sale } = await supabase.from('vendas').select('*, customers(name, telefone)').eq('id', saleId).single();
-    const { data: items } = await supabase.from('venda_itens').select('*, products(name, unit)').eq('venda_id', saleId);
+    const { data: sale } = await supabase.from('vendas').select('*, customers(name, cnpj_cpf, telefone)').eq('id', saleId).single();
+    const { data: items } = await supabase.from('venda_itens').select('*, products(name, barcode, unit, ncm)').eq('venda_id', saleId);
     const { data: payments } = await supabase.from('pagamentos_venda').select('*, formas_pagamento(nome)').eq('venda_id', saleId);
     
     if (!sale || !items || !payments) return;
 
-    const itemsHtml = items.map(i => `
-      <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-weight: bold; font-size: 13px;">
-        <span>${i.quantidade}${i.products?.unit} x ${i.products?.name}</span>
-        <span>R$ ${Number(i.subtotal).toFixed(2)}</span>
+    const accessKey = fiscalDoc?.authorization?.accessKey || fiscalDoc?.chave || '';
+    const formattedKey = accessKey ? accessKey.replace(/(\d{4})/g, '$1 ').trim() : '';
+    const nfceNumber = fiscalDoc?.number || fiscalDoc?.numero || '59';
+    const nfceSerie = fiscalDoc?.serie || '2';
+    const protocol = fiscalDoc?.protocol || fiscalDoc?.protocolo || 'Autorizada SEFAZ';
+    const isFiscal = !!fiscalDoc || !!accessKey;
+
+    const itemsHtml = items.map((i, idx) => `
+      <div style="margin-bottom: 4px; font-size: 11px;">
+        <div style="display: flex; justify-content: space-between; font-weight: bold;">
+          <span>${String(idx+1).padStart(3, '0')} ${i.products?.name || 'Item'}</span>
+          <span>R$ ${Number(i.subtotal).toFixed(2)}</span>
+        </div>
+        <div style="font-size: 10px; color: #333; display: flex; justify-content: space-between;">
+          <span>QTD: ${i.quantidade} ${i.products?.unit || 'UN'} x R$ ${Number(i.preco_unitario).toFixed(2)}</span>
+          ${isFiscal ? `<span>NCM: ${i.products?.ncm || '03028990'}</span>` : ''}
+        </div>
       </div>
     `).join('');
 
     const paymentsHtml = payments.map(p => `
-      <div><strong>FORMA:</strong> ${p.formas_pagamento?.nome}</div>
+      <div style="display: flex; justify-content: space-between; font-size: 11px;">
+        <span>${p.formas_pagamento?.nome || 'PAGAMENTO'}:</span>
+        <span>R$ ${Number(p.valor).toFixed(2)}</span>
+      </div>
     `).join('');
+
+    const qrCodeUrl = accessKey ? `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=http://sat.sef.sc.gov.br/nfce/consulta?p=${accessKey}|2|1|1` : '';
 
     const receiptHtml = `
       <html>
         <head>
-          <title>Cupom Não Fiscal - Fish House</title>
+          <title>${isFiscal ? 'DANFE NFC-e' : 'Comanda'} - Fish House</title>
           <style>
-            @page { margin: 0; }
+            @page { margin: 0; size: auto; }
             body { 
               font-family: 'Courier New', Courier, monospace; 
-              padding: 15px; 
+              padding: 10px; 
               width: 80mm; 
               margin: 0 auto; 
               color: black;
+              font-size: 11px;
             }
-            .header { text-align: center; border-bottom: 1px dashed black; padding-bottom: 8px; margin-bottom: 8px; }
-            .title { font-size: 18px; font-weight: bold; }
-            .info { font-size: 11px; margin-bottom: 5px; }
-            .items { border-bottom: 1px dashed black; padding-bottom: 8px; margin-bottom: 8px; }
-            .total { font-size: 16px; font-weight: bold; text-align: right; }
-            .footer { text-align: center; font-size: 9px; margin-top: 15px; border-top: 1px dashed black; padding-top: 8px; }
+            .header { text-align: center; border-bottom: 1px dashed black; padding-bottom: 6px; margin-bottom: 6px; }
+            .title { font-size: 15px; font-weight: bold; }
+            .subtitle { font-size: 11px; font-weight: bold; margin: 3px 0; }
+            .info { font-size: 10px; margin-bottom: 3px; }
+            .items { border-bottom: 1px dashed black; padding-bottom: 6px; margin-bottom: 6px; }
+            .total-block { font-size: 12px; font-weight: bold; margin: 6px 0; }
+            .footer { text-align: center; font-size: 9px; margin-top: 10px; border-top: 1px dashed black; padding-top: 6px; }
+            .qr-block { text-align: center; margin: 8px 0; }
           </style>
         </head>
         <body onload="window.print();">
           <div class="header">
-            <div class="title">${activeCompany?.nome_fantasia || 'FISH HOUSE PEIXARIA'}</div>
-            <div class="info">CNPJ: ${activeCompany?.cnpj || '50.123.456/0001-89'}</div>
-            <div class="info">${activeCompany?.logradouro || 'Rua das Gaivotas, 100'} - ${activeCompany?.cidade || 'Navegantes'}/${activeCompany?.uf || 'SC'}</div>
-            <div class="info">Fone: ${activeCompany?.telefone || '(47) 99999-9999'}</div>
-            <div style="margin-top: 5px; font-weight: bold;">*** CUPOM NÃO FISCAL ***</div>
-            <div style="font-size: 9px;">Venda #${sale.id.slice(0, 8).toUpperCase()} - ${new Date(sale.created_at).toLocaleString('pt-BR')}</div>
+            <div class="title">FISH HOUSE SC LTDA</div>
+            <div class="info">CNPJ: 63.265.618/0001-01 - IE: 263906078</div>
+            <div class="info">Rua Pref. Juvenal Mafra, 42 - Centro - Navegantes/SC</div>
+            <div class="info">Fone: (47) 3011-4981</div>
+            <div style="border-top: 1px dashed black; margin: 5px 0;"></div>
+            ${isFiscal ? `
+              <div class="subtitle">DANFE NFC-e - Documento Auxiliar da<br/>Nota Fiscal de Consumidor Eletrônica</div>
+              <div class="info">Não permite aproveitamento de crédito de ICMS</div>
+            ` : `
+              <div class="subtitle">*** CUPOM NÃO FISCAL - COMANDA ***</div>
+            `}
+            <div class="info">Venda #${sale.id.slice(0, 8).toUpperCase()} - ${new Date(sale.created_at).toLocaleString('pt-BR')}</div>
           </div>
           
           <div class="info">
-            <strong>CLIENTE:</strong> ${sale.customers?.name || 'Consumidor Final'}<br/>
-            ${sale.customers?.telefone ? `<strong>FONE:</strong> ${sale.customers.telefone}<br/>` : ''}
+            <strong>CONSUMIDOR:</strong> ${sale.customers?.name || 'Consumidor Final'}<br/>
+            ${sale.customers?.cnpj_cpf ? `<strong>CPF/CNPJ:</strong> ${sale.customers.cnpj_cpf}<br/>` : ''}
           </div>
-          <div style="border-bottom: 1px dashed black; margin-bottom: 8px;"></div>
+          <div style="border-bottom: 1px dashed black; margin-bottom: 6px;"></div>
           
           <div class="items">
+            <div style="font-weight: bold; font-size: 10px; margin-bottom: 4px; display: flex; justify-content: space-between;">
+              <span>ITEM CÓDIGO DESCRIÇÃO QTD UN VL_UNIT</span>
+              <span>TOTAL</span>
+            </div>
             ${itemsHtml}
           </div>
           
-          <div class="total">
-            ${sale.desconto > 0 ? `<div style="font-size: 11px; color: #555;">Desconto: -R$ ${Number(sale.desconto).toFixed(2)}</div>` : ''}
-            ${sale.acrescimo > 0 ? `<div style="font-size: 11px; color: #555;">Acréscimo: +R$ ${Number(sale.acrescimo).toFixed(2)}</div>` : ''}
-            <div>TOTAL: R$ ${Number(sale.valor_final).toFixed(2)}</div>
+          <div class="total-block">
+            <div style="display: flex; justify-content: space-between;">
+              <span>QTD. TOTAL DE ITENS:</span>
+              <span>${items.reduce((acc, it) => acc + Number(it.quantidade), 0)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>VALOR TOTAL:</span>
+              <span>R$ ${Number(sale.valor_total).toFixed(2)}</span>
+            </div>
+            ${sale.desconto > 0 ? `
+              <div style="display: flex; justify-content: space-between; font-weight: normal; color: #444;">
+                <span>Desconto:</span>
+                <span>-R$ ${Number(sale.desconto).toFixed(2)}</span>
+              </div>
+            ` : ''}
+            ${sale.acrescimo > 0 ? `
+              <div style="display: flex; justify-content: space-between; font-weight: normal; color: #444;">
+                <span>Acréscimo:</span>
+                <span>+R$ ${Number(sale.acrescimo).toFixed(2)}</span>
+              </div>
+            ` : ''}
+            <div style="display: flex; justify-content: space-between; font-size: 14px; margin-top: 4px; border-top: 1px solid black; padding-top: 4px;">
+              <span>VALOR A PAGAR:</span>
+              <span>R$ ${Number(sale.valor_final).toFixed(2)}</span>
+            </div>
           </div>
-          <div style="border-bottom: 1px dashed black; margin: 8px 0;"></div>
           
-          <div class="info">
-            <strong>PAGAMENTO:</strong><br/>
+          <div style="border-bottom: 1px dashed black; margin: 6px 0;"></div>
+          
+          <div style="margin-bottom: 6px;">
+            <div style="font-weight: bold; margin-bottom: 3px;">FORMA DE PAGAMENTO:</div>
             ${paymentsHtml}
           </div>
+
+          ${isFiscal ? `
+            <div style="border-bottom: 1px dashed black; margin: 6px 0;"></div>
+            <div class="info" style="text-align: center;">
+              <strong>EMISSÃO EM AMBIENTE DE PRODUÇÃO</strong><br/>
+              NFC-e nº ${String(nfceNumber).padStart(9, '0')} - Série ${nfceSerie}<br/>
+              Data de Emissão: ${new Date().toLocaleString('pt-BR')}<br/>
+              Protocolo de Autorização: ${protocol}<br/>
+              <div style="margin-top: 5px; font-weight: bold;">CHAVE DE ACESSO:</div>
+              <div style="letter-spacing: 0.5px; font-size: 9px; font-weight: bold; margin: 3px 0;">${formattedKey}</div>
+            </div>
+            ${qrCodeUrl ? `
+              <div class="qr-block">
+                <img src="${qrCodeUrl}" width="130" height="130" style="display: block; margin: 0 auto;" />
+                <div style="font-size: 8px; margin-top: 3px;">Consulte pela Chave de Acesso em http://sat.sef.sc.gov.br/nfce/consulta</div>
+              </div>
+            ` : ''}
+            <div class="info" style="font-size: 8px; text-align: center; margin-top: 4px;">
+              Tributos Totais Incidentes (Lei Federal 12.741/2012): Simples Nacional
+            </div>
+          ` : ''}
           
           <div class="footer">
-            Obrigado pela preferência!<br/>
-            Volte Sempre!<br/>
-            www.peixariafishhouse.com.br
+            Obrigado pela preferência! Volte Sempre!<br/>
+            Peixaria Fish House - www.peixariafishhouse.com.br
           </div>
         </body>
       </html>
