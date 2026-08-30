@@ -68,18 +68,20 @@ export default function App() {
             <Route path="/meus-pedidos" element={<PublicLayout><CustomerDashboard /></PublicLayout>} />
             <Route path="/verificar" element={<PublicLayout><CustomerLogin /></PublicLayout>} />
 
-            {/* Admin Routes - Completely separate UI */}
+            {/* Admin Routes - Nested architecture for instant tab switching */}
             <Route path="/admin/login" element={<AdminLogin />} />
-            <Route path="/admin" element={<ProtectedRoute><AdminLayout><AdminDashboard /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/pdv" element={<ProtectedRoute><AdminLayout><PDV /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/estoque" element={<ProtectedRoute><AdminLayout><AdminInventory /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/compras" element={<ProtectedRoute><AdminLayout><AdminPurchases /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/financeiro" element={<ProtectedRoute><AdminLayout><AdminFinancial /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/pedidos" element={<ProtectedRoute><AdminLayout><AdminOrders /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/produtos" element={<ProtectedRoute><AdminLayout><AdminProducts /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/clientes" element={<ProtectedRoute><AdminLayout><AdminCustomers /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/config" element={<ProtectedRoute><AdminLayout><AdminSettings /></AdminLayout></ProtectedRoute>} />
-            <Route path="/admin/cleanup" element={<ProtectedRoute><AdminLayout><AdminDatabaseCleanup /></AdminLayout></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
+              <Route index element={<AdminDashboard />} />
+              <Route path="pdv" element={<PDV />} />
+              <Route path="estoque" element={<AdminInventory />} />
+              <Route path="compras" element={<AdminPurchases />} />
+              <Route path="financeiro" element={<AdminFinancial />} />
+              <Route path="pedidos" element={<AdminOrders />} />
+              <Route path="produtos" element={<AdminProducts />} />
+              <Route path="clientes" element={<AdminCustomers />} />
+              <Route path="config" element={<AdminSettings />} />
+              <Route path="cleanup" element={<AdminDatabaseCleanup />} />
+            </Route>
           </Routes>
         </Router>
       </CustomerAuthProvider>

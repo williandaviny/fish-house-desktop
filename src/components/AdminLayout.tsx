@@ -25,7 +25,7 @@ import {
   FileSpreadsheet,
   Globe
 } from 'lucide-react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
 import SyncStatusBadge from './SyncStatusBadge';
@@ -41,7 +41,7 @@ interface Notification {
 }
 
 interface AdminLayoutProps {
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
@@ -458,7 +458,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               </motion.div>
             )}
           </AnimatePresence>
-          {children}
+          {children || <Outlet />}
         </div>
       </main>
     </div>
