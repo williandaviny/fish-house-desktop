@@ -447,10 +447,53 @@ export default function AdminFinancial() {
           const byteArray = new Uint8Array(byteNumbers);
           const blob = new Blob([byteArray], { type: 'application/pdf' });
           const url = URL.createObjectURL(blob);
-          window.open(url, '_blank');
+
+          // 1. Trigger download
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `NFCe_${invoiceId.slice(0, 8)}.pdf`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          // 2. Open print preview
+          const iframe = document.createElement('iframe');
+          iframe.style.position = 'fixed';
+          iframe.style.right = '0';
+          iframe.style.bottom = '0';
+          iframe.style.width = '0';
+          iframe.style.height = '0';
+          iframe.style.border = '0';
+          iframe.src = url;
+          document.body.appendChild(iframe);
+          iframe.onload = () => {
+            try {
+              iframe.contentWindow?.focus();
+              iframe.contentWindow?.print();
+            } catch (_) {}
+          };
+
+          showNotification('success', 'PDF da Nota Fiscal baixado e enviado para impressão! ✨');
+        } else {
+          const blob = new Blob([fileData], { type: 'application/xml;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `CupomFiscal_${invoiceId.slice(0, 8)}.xml`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          showNotification('success', 'Arquivo XML baixado com sucesso!');
         }
       } else if (fileUrl) {
-        window.open(fileUrl, '_blank');
+        const link = document.createElement('a');
+        link.href = fileUrl;
+        link.target = '_blank';
+        link.download = `CupomFiscal_${invoiceId.slice(0, 8)}.${format}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showNotification('success', `Documento ${format.toUpperCase()} aberto com sucesso!`);
       } else {
         throw new Error('Nota Fiscal / PDF não disponível. A nota pode estar com erro na SEFAZ.');
       }

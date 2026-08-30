@@ -658,7 +658,7 @@ export default function PDV() {
 
       // 3. Smart fast polling (checks every 1s, opens immediately when SEFAZ authorizes)
       let docData: any = null;
-      for (let attempt = 0; attempt < 4; attempt++) {
+      for (let attempt = 0; attempt < 8; attempt++) {
         await new Promise(r => setTimeout(r, 1000));
         
         const { data: currentDoc } = await supabase
@@ -701,9 +701,32 @@ export default function PDV() {
       }
 
       if (pdfUrlToOpen) {
-        window.open(pdfUrlToOpen, '_blank');
+        // 1. Trigger download
+        const link = document.createElement('a');
+        link.href = pdfUrlToOpen;
+        link.download = `NFCe_${saleId.slice(0, 8)}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        // 2. Open print preview in iframe
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        iframe.src = pdfUrlToOpen;
+        document.body.appendChild(iframe);
+        iframe.onload = () => {
+          try {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+          } catch (_) {}
+        };
       } else {
-        alert('NFC-e Autorizada pela SEFAZ! O PDF está disponível para impressão no Painel Fiscal.');
+        alert('NFC-e enviada à SEFAZ! O documento está sendo processado pela SEFAZ e você pode consultá-lo a qualquer momento na aba Financeiro ➔ Fiscal.');
       }
     } catch (err: any) {
       alert('⚠️ ' + err.message);
@@ -720,9 +743,6 @@ export default function PDV() {
     
     if (!sale || !items || !payments) return;
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
     const itemsHtml = items.map(i => `
       <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-weight: bold; font-size: 13px;">
         <span>${i.quantidade}${i.products?.unit} x ${i.products?.name}</span>
@@ -734,7 +754,7 @@ export default function PDV() {
       <div><strong>FORMA:</strong> ${p.formas_pagamento?.nome}</div>
     `).join('');
 
-    printWindow.document.write(`
+    const receiptHtml = `
       <html>
         <head>
           <title>Cupom Não Fiscal - Fish House</title>
@@ -744,7 +764,7 @@ export default function PDV() {
               font-family: 'Courier New', Courier, monospace; 
               padding: 15px; 
               width: 80mm; 
-              margin: 0 auto;
+              margin: 0 auto; 
               color: black;
             }
             .header { text-align: center; border-bottom: 1px dashed black; padding-bottom: 8px; margin-bottom: 8px; }
@@ -755,49 +775,73 @@ export default function PDV() {
             .footer { text-align: center; font-size: 9px; margin-top: 15px; border-top: 1px dashed black; padding-top: 8px; }
           </style>
         </head>
-        <body onload="window.print(); window.close();">
+        <body onload="window.print();">
           <div class="header">
-            <div class="title">${activeCompany?.nome_fantasia || 'FISH HOUSE'}</div>
-            <div style="font-size: 9px; margin-top: 3px;">CNPJ: ${activeCompany?.cnpj}</div>
-            <div style="font-size: 10px; margin-top: 3px;">Cupom Balcão #${sale.id.slice(0,8).toUpperCase()}</div>
-            <div style="font-size: 10px;">${new Date(sale.created_at).toLocaleString()}</div>
+            <div class="title">${activeCompany?.nome_fantasia || 'FISH HOUSE PEIXARIA'}</div>
+            <div class="info">CNPJ: ${activeCompany?.cnpj || '50.123.456/0001-89'}</div>
+            <div class="info">${activeCompany?.logradouro || 'Rua das Gaivotas, 100'} - ${activeCompany?.cidade || 'Navegantes'}/${activeCompany?.uf || 'SC'}</div>
+            <div class="info">Fone: ${activeCompany?.telefone || '(47) 99999-9999'}</div>
+            <div style="margin-top: 5px; font-weight: bold;">*** CUPOM NÃO FISCAL ***</div>
+            <div style="font-size: 9px;">Venda #${sale.id.slice(0, 8).toUpperCase()} - ${new Date(sale.created_at).toLocaleString('pt-BR')}</div>
           </div>
-
+          
           <div class="info">
-            <strong>CLIENTE:</strong> ${sale.customers?.name || 'Cliente Geral'}<br>
-            <strong>CNPJ/CPF:</strong> ${sale.customers?.cnpj_cpf || 'Não Informado'}
+            <strong>CLIENTE:</strong> ${sale.customers?.name || 'Consumidor Final'}<br/>
+            ${sale.customers?.telefone ? `<strong>FONE:</strong> ${sale.customers.telefone}<br/>` : ''}
           </div>
-
+          <div style="border-bottom: 1px dashed black; margin-bottom: 8px;"></div>
+          
           <div class="items">
-            <div style="font-size: 9px; text-transform: uppercase; margin-bottom: 5px; border-bottom: 1px solid black; font-weight: bold;">Produtos</div>
             ${itemsHtml}
           </div>
-
+          
           <div class="total">
-            SUBTOTAL: R$ ${Number(sale.valor_total).toFixed(2)}<br>
-            DESCONTO: R$ ${Number(sale.desconto).toFixed(2)}<br>
-            TOTAL: R$ ${Number(sale.valor_final).toFixed(2)}
+            ${sale.desconto > 0 ? `<div style="font-size: 11px; color: #555;">Desconto: -R$ ${Number(sale.desconto).toFixed(2)}</div>` : ''}
+            ${sale.acrescimo > 0 ? `<div style="font-size: 11px; color: #555;">Acréscimo: +R$ ${Number(sale.acrescimo).toFixed(2)}</div>` : ''}
+            <div>TOTAL: R$ ${Number(sale.valor_final).toFixed(2)}</div>
           </div>
-
-          <div class="info" style="margin-top: 8px;">
+          <div style="border-bottom: 1px dashed black; margin: 8px 0;"></div>
+          
+          <div class="info">
+            <strong>PAGAMENTO:</strong><br/>
             ${paymentsHtml}
           </div>
-
+          
           <div class="footer">
-            Obrigado pela preferência!<br>Volte Sempre!
+            Obrigado pela preferência!<br/>
+            Volte Sempre!<br/>
+            www.peixariafishhouse.com.br
           </div>
         </body>
       </html>
-    `);
-    printWindow.document.close();
+    `;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+    
+    const doc = iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(receiptHtml);
+      doc.close();
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(() => document.body.removeChild(iframe), 1500);
+      }, 300);
+    }
   };
 
   const handlePrintTefReceipt = (receipt: string) => {
     if (!receipt) return;
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
 
-    printWindow.document.write(`
+    const tefHtml = `
       <html>
         <head>
           <title>Comprovante TEF - Fish House</title>
@@ -811,15 +855,36 @@ export default function PDV() {
               color: black;
               font-size: 11px;
               line-height: 1.2;
+              white-space: pre-wrap;
             }
           </style>
         </head>
-        <body onload="window.print(); window.close();">
-          <div style="white-space: pre-wrap; font-family: monospace;">${receipt}</div>
+        <body onload="window.print();">
+          <div>${receipt.replace(/\\n/g, '<br/>')}</div>
         </body>
       </html>
-    `);
-    printWindow.document.close();
+    `;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+    
+    const doc = iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(tefHtml);
+      doc.close();
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(() => document.body.removeChild(iframe), 1500);
+      }, 300);
+    }
   };
 
   const handleReprintLastTef = async () => {
