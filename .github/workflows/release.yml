@@ -1,4 +1,4 @@
-name: 'Release Build'
+﻿name: 'Release Build'
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
         run: choco install nsis -y
 
       - name: Install Node dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps --ignore-scripts
 
       - name: Build Web Frontend
         run: npm run build
@@ -48,12 +48,13 @@ jobs:
         with:
           name: Fish House Desktop ${{ github.ref_name || 'v1.0.5' }}
           body: |
-            ## 🐟 Fish House Desktop - Instalador Windows Oficial
+            ## ðŸŸ Fish House Desktop - Instalador Windows Oficial
             
-            Sistema Completo de Gestão Comercial, Frente de Caixa (PDV), pesagem Toledo MGV 7 e todos os módulos para a Peixaria Premium Fish House.
+            Sistema Completo de GestÃ£o Comercial, Frente de Caixa (PDV), pesagem Toledo MGV 7 e todos os mÃ³dulos para a Peixaria Premium Fish House.
             
             - **Instalador:** Baixe o arquivo `.exe` abaixo para instalar no computador da loja.
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
