@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
+import { downloadFiscalDocumentBlob, triggerPrintAndDownload } from '../services/fiscal/fiscalService';
 
 type Company = {
   id: string;
@@ -340,162 +341,21 @@ export default function AdminFinancial() {
     printWindow.document.close();
   };
 
-  const handleDownloadFiscalDoc = async (invoiceId: string, format: 'pdf' | 'xml', directUrl?: string, vendaObj?: any) => {
-    if (directUrl && directUrl.startsWith('http') && !directUrl.includes('api.nfse.io')) {
-      window.open(directUrl, '_blank');
-      return;
-    }
-    if (!invoiceId) {
+  const handleDownloadFiscalDoc = async (invoiceIdOrChave: string, format: 'pdf' | 'xml', _directUrl?: string, vendaObj?: any) => {
+    if (!invoiceIdOrChave) {
       showNotification('error', 'Identificador da nota não encontrado.');
       return;
     }
-    const docKey = `${invoiceId}_${format}`;
+    const docKey = `${invoiceIdOrChave}_${format}`;
     setLoadingDocId(docKey);
 
     try {
-      // Step 1: Try fetching via Edge Function (passing referencia_tipo/id to satisfy legacy Edge Function checks if any)
-      let fileData: string | null = null;
-      let fileUrl: string | null = null;
-
-      try {
-        const { data, error } = await supabase.functions.invoke('nfe-io-invoice', {
-          body: { 
-            action: 'get_file', 
-            invoice_id: invoiceId, 
-            format,
-            referencia_tipo: 'venda',
-            referencia_id: vendaObj?.id || invoiceId
-          }
-        });
-
-        if (!error && data && data.success) {
-          fileData = data.data || null;
-          fileUrl = data.url || null;
-        }
-      } catch (edgeErr) {
-        console.warn('Edge function invoke error, trying direct fallback...', edgeErr);
-      }
-
-      // Step 2: Fallback to direct NFe.io API if Edge Function didn't return data
-      if (!fileData && !fileUrl) {
-        const { data: settings } = await supabase
-          .from('site_settings')
-          .select('nfe_io_api_key, nfe_io_company_id, nfe_io_service_code')
-          .limit(1)
-          .single();
-
-        const apiKey = settings?.nfe_io_api_key;
-        const companyId = settings?.nfe_io_company_id;
-        const isService = !!settings?.nfe_io_service_code;
-
-        if (apiKey && companyId) {
-          const endpoint = isService ? 'serviceinvoices' : 'consumerinvoices';
-          const apiUrl = `https://api.nfse.io/v2/companies/${companyId}/${endpoint}/${invoiceId}/${format}`;
-
-          console.log(`Direct NFe.io fetch: ${apiUrl}`);
-          let nfeRes = await fetch(apiUrl, {
-            headers: { 'Authorization': `ApiKey ${apiKey}` }
-          });
-
-          if (!nfeRes.ok) {
-            const v1Url = `https://nfe.io/v1/companies/${companyId}/${endpoint}/${invoiceId}/${format}`;
-            nfeRes = await fetch(v1Url, {
-              headers: { 'Authorization': `ApiKey ${apiKey}` }
-            });
-          }
-
-          if (nfeRes.ok) {
-            const rawText = await nfeRes.text();
-            let fileTargetUrl = apiUrl;
-            try {
-              const metaJson = JSON.parse(rawText);
-              if (metaJson.uri) {
-                fileTargetUrl = metaJson.uri;
-              }
-            } catch (_) {}
-
-            if (fileTargetUrl.startsWith('http')) {
-              if (format === 'xml') {
-                const xmlRes = await fetch(fileTargetUrl);
-                const xmlText = await xmlRes.text();
-                const blob = new Blob([xmlText], { type: 'application/xml;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `CupomFiscal_${invoiceId.slice(0, 8)}.xml`;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                showNotification('success', 'Arquivo XML baixado com sucesso!');
-                return;
-              } else {
-                fileUrl = fileTargetUrl;
-              }
-            }
-          }
-        }
-      }
-
-      // Process fetched PDF or URL
-      if (fileData) {
-        if (format === 'pdf') {
-          const byteCharacters = atob(fileData);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: 'application/pdf' });
-          const url = URL.createObjectURL(blob);
-
-          // 1. Trigger download
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `NFCe_${invoiceId.slice(0, 8)}.pdf`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-
-          // 2. Open print preview
-          const iframe = document.createElement('iframe');
-          iframe.style.position = 'fixed';
-          iframe.style.right = '0';
-          iframe.style.bottom = '0';
-          iframe.style.width = '0';
-          iframe.style.height = '0';
-          iframe.style.border = '0';
-          iframe.src = url;
-          document.body.appendChild(iframe);
-          iframe.onload = () => {
-            try {
-              iframe.contentWindow?.focus();
-              iframe.contentWindow?.print();
-            } catch (_) {}
-          };
-
-          showNotification('success', 'PDF da Nota Fiscal baixado e enviado para impressão! ✨');
-        } else {
-          const blob = new Blob([fileData], { type: 'application/xml;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `CupomFiscal_${invoiceId.slice(0, 8)}.xml`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          showNotification('success', 'Arquivo XML baixado com sucesso!');
-        }
-      } else if (fileUrl) {
-        const link = document.createElement('a');
-        link.href = fileUrl;
-        link.target = '_blank';
-        link.download = `CupomFiscal_${invoiceId.slice(0, 8)}.${format}`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        showNotification('success', `Documento ${format.toUpperCase()} aberto com sucesso!`);
+      const res = await downloadFiscalDocumentBlob(invoiceIdOrChave, format, vendaObj?.id);
+      if (res) {
+        triggerPrintAndDownload(res.blobUrl, res.filename, format === 'pdf');
+        showNotification('success', `${format.toUpperCase()} baixado com sucesso! ✨`);
       } else {
-        throw new Error('Nota Fiscal / PDF não disponível. A nota pode estar com erro na SEFAZ.');
+        showNotification('error', `Não foi possível obter o ${format.toUpperCase()} da SEFAZ no momento.`);
       }
     } catch (err: any) {
       console.error(err);

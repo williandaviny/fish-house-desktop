@@ -31,6 +31,7 @@ import { tefService } from '../services/tef/TefService';
 import { TefConfig } from '../services/tef/types';
 import { localDb } from '../services/local/localDb';
 import { syncEngine } from '../services/local/syncEngine';
+import { downloadFiscalDocumentBlob, triggerPrintAndDownload } from '../services/fiscal/fiscalService';
 
 type Product = {
   id: string;
@@ -721,58 +722,11 @@ export default function PDV() {
 
   const resolveAndPrintPdf = async (invoiceIdOrUrl: string, saleId: string) => {
     try {
-      let blobUrl: string | null = null;
-
-      // If it's already a blob URL
-      if (invoiceIdOrUrl.startsWith('blob:')) {
-        blobUrl = invoiceIdOrUrl;
+      const res = await downloadFiscalDocumentBlob(invoiceIdOrUrl, 'pdf', saleId);
+      if (res) {
+        triggerPrintAndDownload(res.blobUrl, res.filename, true);
       } else {
-        // Fetch base64 from Edge Function (which has the API key)
-        const { data: fileRes } = await supabase.functions.invoke('nfe-io-invoice', {
-          body: { action: 'get_file', invoice_id: invoiceIdOrUrl, format: 'pdf', referencia_tipo: 'venda', referencia_id: saleId }
-        });
-
-        if (fileRes?.data) {
-          const byteCharacters = atob(fileRes.data);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/pdf' });
-          blobUrl = URL.createObjectURL(blob);
-        } else if (fileRes?.url && !fileRes.url.includes('api.nfse.io')) {
-          blobUrl = fileRes.url;
-        }
-      }
-
-      if (blobUrl) {
-        // 1. Download file locally
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = `NFCe_${saleId.slice(0, 8)}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-
-        // 2. Trigger print preview via iframe
-        const iframe = document.createElement('iframe');
-        iframe.style.position = 'fixed';
-        iframe.style.right = '0';
-        iframe.style.bottom = '0';
-        iframe.style.width = '0';
-        iframe.style.height = '0';
-        iframe.style.border = '0';
-        iframe.src = blobUrl;
-        document.body.appendChild(iframe);
-        iframe.onload = () => {
-          try {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-            setTimeout(() => document.body.removeChild(iframe), 3000);
-          } catch (_) {}
-        };
-      } else {
-        alert('NFC-e Autorizada pela SEFAZ! O PDF está disponível no Painel Fiscal.');
+        alert('NFC-e Autorizada pela SEFAZ! O PDF está disponível para consulta no Painel Fiscal.');
       }
     } catch (err: any) {
       console.error('Erro ao baixar PDF:', err);
