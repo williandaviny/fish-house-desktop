@@ -1,30 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://mqktczeqkynqqgzkbrno.supabase.co';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa3RjemVxa3lucXFnemticm5vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMzI3MDUsImV4cCI6MjA5OTkwODcwNX0.vFo6S1aa1Uv2JsleRh50VkoL4aknzjepgUvqOI0frNY';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error(
-    '[Supabase] Erro: VITE_SUPABASE_URL ou VITE_SUPABASE_ANON_KEY não estão definidos. ' +
-    'Verifique as variáveis de ambiente de build no seu servidor de hospedagem.'
-  );
-}
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Cria um cliente com Proxy para evitar travamento do carregamento do bundle JS
-export const supabase = (supabaseUrl && supabaseAnonKey)
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : new Proxy({} as any, {
-      get(_, prop) {
-        console.error(
-          `[Supabase] Erro de Inicialização: Tentativa de acessar a propriedade "${String(prop)}" ` +
-          'no cliente Supabase, mas ele não foi configurado devidamente.'
-        );
-        return () => {
-          throw new Error(
-            'O cliente Supabase não está configurado. Verifique se as variáveis de ambiente ' +
-            'VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY foram passadas durante a compilação (build).'
-          );
-        };
-      }
-    });
 

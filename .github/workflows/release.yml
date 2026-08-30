@@ -32,19 +32,25 @@ jobs:
 
       - name: Build Web Frontend
         run: npm run build
+        env:
+          VITE_SUPABASE_URL: https://mqktczeqkynqqgzkbrno.supabase.co
+          VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa3RjemVxa3lucXFnemticm5vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMzI3MDUsImV4cCI6MjA5OTkwODcwNX0.vFo6S1aa1Uv2JsleRh50VkoL4aknzjepgUvqOI0frNY
 
       - name: Build Tauri Desktop Executable (.exe)
         run: npx tauri build --ci
+        env:
+          VITE_SUPABASE_URL: https://mqktczeqkynqqgzkbrno.supabase.co
+          VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa3RjemVxa3lucXFnemticm5vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMzI3MDUsImV4cCI6MjA5OTkwODcwNX0.vFo6S1aa1Uv2JsleRh50VkoL4aknzjepgUvqOI0frNY
 
       - name: Publish GitHub Release with .exe
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          name: Fish House Desktop ${{ github.ref_name || 'v1.0.0' }}
+          name: Fish House Desktop ${{ github.ref_name || 'v1.0.5' }}
           body: |
             ## 🐟 Fish House Desktop - Instalador Windows Oficial
             
-            Sistema de Frente de Caixa (PDV), pesagem Toledo MGV 7 e Gestão Comercial Offline-First para a Peixaria Premium Fish House.
+            Sistema Completo de Gestão Comercial, Frente de Caixa (PDV), pesagem Toledo MGV 7 e todos os módulos para a Peixaria Premium Fish House.
             
             - **Instalador:** Baixe o arquivo `.exe` abaixo para instalar no computador da loja.
           files: |
