@@ -29,6 +29,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { getOptimizedImageUrl } from '../utils/image';
 import { tefService } from '../services/tef/TefService';
 import { TefConfig } from '../services/tef/types';
+import { localDb } from '../services/local/localDb';
+import { syncEngine } from '../services/local/syncEngine';
 
 type Product = {
   id: string;
@@ -263,29 +265,49 @@ export default function PDV() {
   };
 
   const fetchPaymentMethods = async () => {
-    const { data } = await supabase.from('formas_pagamento').select('*').order('nome');
-    if (data) {
-      setPaymentMethods(data);
-      const defaultPm = data.find(p => p.tipo === 'dinheiro') || data[0];
+    const local = localDb.getPaymentMethods();
+    if (local && local.length > 0) {
+      setPaymentMethods(local);
+      const defaultPm = local.find(p => p.tipo === 'dinheiro') || local[0];
       setSelectedPaymentMethod(defaultPm);
+    } else {
+      const { data } = await supabase.from('formas_pagamento').select('*').order('nome');
+      if (data) {
+        localDb.setPaymentMethods(data);
+        setPaymentMethods(data);
+        const defaultPm = data.find(p => p.tipo === 'dinheiro') || data[0];
+        setSelectedPaymentMethod(defaultPm);
+      }
     }
   };
 
   const fetchProducts = async () => {
-    const { data } = await supabase
-      .from('products')
-      .select('id, name, price, category, image_url, is_available, stock, unit, package_info, barcode, codigo_interno, plu_codigo, is_combo, is_illustrative, ncm, cfop, price_wholesale, wholesale_min_qty')
-      .eq('is_available', true)
-      .order('name');
-    if (data) {
-      setProducts(data as any);
-      setFilteredProducts(data as any);
+    const local = localDb.getProducts();
+    if (local && local.length > 0) {
+      setProducts(local as any);
+      setFilteredProducts(local as any);
+    } else {
+      // Primeira instalacao: baixa catalogo completo da nuvem
+      const res = await syncEngine.downloadInitialCatalog();
+      if (res.success) {
+        const fresh = localDb.getProducts();
+        setProducts(fresh as any);
+        setFilteredProducts(fresh as any);
+      }
     }
   };
 
   const fetchCustomers = async () => {
-    const { data } = await supabase.from('customers').select('id, name, telefone, cnpj_cpf, email').order('name');
-    if (data) setCustomers(data as any);
+    const local = localDb.getCustomers();
+    if (local && local.length > 0) {
+      setCustomers(local as any);
+    } else {
+      const { data } = await supabase.from('customers').select('id, name, telefone, cnpj_cpf, email').order('name');
+      if (data) {
+        localDb.setCustomers(data);
+        setCustomers(data as any);
+      }
+    }
   };
 
   const handleOpenCaixa = async () => {
@@ -559,6 +581,34 @@ export default function PDV() {
       }
 
       setLastSaleId(data);
+      
+      // Salva no banco local e abate estoque imediatamente
+      try {
+        localDb.saveOrderLocally(
+          {
+            id: data,
+            caixa_id: caixa.id,
+            empresa_id: activeCompany.id,
+            cliente_id: selectedCustomer?.id || null,
+            total_amount: finalTotal,
+            subtotal: subtotal,
+            desconto: discountAmount,
+            acrescimo: surchargeAmount,
+            status: 'concluido',
+            forma_pagamento: selectedPaymentMethod.nome,
+            created_at: new Date().toISOString()
+          },
+          cart.map(item => ({
+            product_id: item.product.id,
+            quantity: item.quantity,
+            price_unit: item.price_unit,
+            subtotal: item.subtotal
+          }))
+        );
+      } catch (e) {
+        console.error('[PDV] Erro ao gravar localmente:', e);
+      }
+
       setIsSuccessModalOpen(true);
       
       // Auto emit & print NFC-e

@@ -28,6 +28,8 @@ import {
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
+import SyncStatusBadge from './SyncStatusBadge';
+
 interface Notification {
   id: string;
   title: string;
@@ -287,6 +289,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
           </div>
 
           <div className="flex items-center gap-2 md:gap-4">
+            {/* Local-First Sync Engine Status Badge */}
+            <SyncStatusBadge />
+
             {/* Share B2B Link */}
             <button 
               onClick={() => {

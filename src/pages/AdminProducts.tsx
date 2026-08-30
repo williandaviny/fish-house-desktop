@@ -32,6 +32,8 @@ import { getOptimizedImageUrl } from '../utils/image';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../hooks/useSettings';
 import { motion, AnimatePresence } from 'motion/react';
+import { localDb } from '../services/local/localDb';
+import { syncEngine } from '../services/local/syncEngine';
 
 type Product = {
   id: string;
@@ -144,20 +146,21 @@ export default function AdminProducts() {
 
   const fetchProducts = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('products')
-      .select('id, name, price, category, image_url, is_available, stock, unit, package_info, barcode, codigo_interno, plu_codigo, is_combo, is_illustrative, is_featured, ncm, cfop, price_wholesale, wholesale_min_qty, custo_medio, is_deleted, tara_id, validade_dias, description')
-      .order('name');
-    
-    if (error) {
-      console.error('[Supabase Error] products:', error);
-      alert('Erro ao carregar produtos do banco: ' + (error.message || JSON.stringify(error)));
-    } else if (data) {
-      // Filtra produtos excluídos em memória de forma segura
-      const activeProducts = data.filter((p: any) => p.is_deleted !== true);
+    // 1. Carrega instantaneamente do banco local
+    const local = localDb.getProducts();
+    if (local && local.length > 0) {
+      const activeProducts = local.filter((p: any) => p.is_deleted !== true);
       setAllProducts(activeProducts);
+      setLoading(false);
+    } else {
+      // 2. Se vazio (primeiro boot), sincroniza da nuvem
+      const res = await syncEngine.downloadInitialCatalog();
+      if (res.success) {
+        const fresh = localDb.getProducts();
+        setAllProducts(fresh.filter((p: any) => p.is_deleted !== true));
+      }
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -511,6 +514,9 @@ export default function AdminProducts() {
         await supabase.from('product_combo_items').insert(itemsToInsert);
       }
     }
+
+    // Atualiza cache local instantaneamente
+    localDb.saveProduct({ ...productToSave, id: savedProductId });
 
     setIsModalOpen(false);
     setComboItems([]);

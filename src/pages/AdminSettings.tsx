@@ -26,10 +26,15 @@ import {
   Barcode,
   Monitor,
   Edit2,
-  Check
+  Check,
+  HardDrive,
+  CloudUpload,
+  RefreshCw
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
+import { localDb } from '../services/local/localDb';
+import { syncEngine } from '../services/local/syncEngine';
 
 type OpeningHour = {
   day: number;
@@ -2159,6 +2164,69 @@ export default function AdminSettings() {
                         <span><strong>Modo Tela Cheia Nativo:</strong> Abre como um aplicativo independente de Windows, impedindo que o operador do caixa feche ou saia da tela de vendas acidentalmente.</span>
                       </li>
                     </ul>
+                  </div>
+                </div>
+
+                {/* Motor de Sincronização Local (Zero Egress / Offline-First) */}
+                <div className="bg-ink-950/40 p-8 rounded-[2.5rem] border border-white/5 space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-sm text-gold-500 font-bold uppercase tracking-wider flex items-center gap-2">
+                        <HardDrive className="w-4 h-4" /> Banco de Dados Local & Sincronização em Nuvem
+                      </h4>
+                      <p className="text-xs text-gray-400 mt-1">
+                        O aplicativo opera com cache local para eliminar custo de Egress e garantir buscas em 0ms no caixa sem depender da internet.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await syncEngine.downloadInitialCatalog(true);
+                          if (res.success) {
+                            alert(`Catálogo atualizado com sucesso! ${res.count} produtos salvos localmente.`);
+                          } else {
+                            alert(`Erro ao sincronizar: ${res.error}`);
+                          }
+                        }}
+                        className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-gold-500" /> Baixar Catálogo Completo
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await syncEngine.syncAll();
+                          if (res.success) {
+                            alert(`Sincronização concluída! ${res.syncedCount} operações enviadas para a nuvem.`);
+                          } else {
+                            alert(`Erro ao sincronizar: ${res.error}`);
+                          }
+                        }}
+                        className="px-4 py-2.5 bg-gold-500 hover:bg-gold-600 text-ink-950 font-black rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <CloudUpload className="w-3.5 h-3.5" /> Sincronizar Vendas Agora
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                    <div className="bg-white/5 border border-white/5 p-4 rounded-2xl">
+                      <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Produtos no Banco Local</p>
+                      <p className="text-xl font-display font-bold text-white mt-1">{localDb.getProducts().length} itens</p>
+                    </div>
+                    <div className="bg-white/5 border border-white/5 p-4 rounded-2xl">
+                      <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Vendas na Fila Local</p>
+                      <p className="text-xl font-display font-bold text-blue-400 mt-1">{localDb.getSyncQueue().length} pendentes</p>
+                    </div>
+                    <div className="bg-white/5 border border-white/5 p-4 rounded-2xl">
+                      <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Última Sincronização</p>
+                      <p className="text-sm font-bold text-emerald-400 mt-1">
+                        {localDb.getLastSyncTimestamp() ? new Date(localDb.getLastSyncTimestamp()!).toLocaleTimeString('pt-BR') : 'Ainda não executado'}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </motion.div>
