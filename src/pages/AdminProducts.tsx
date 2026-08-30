@@ -90,18 +90,20 @@ export default function AdminProducts() {
   const [replenishValues, setReplenishValues] = useState<Record<string, number>>({});
   const [comboItems, setComboItems] = useState<{child_product_id: string, quantity: number, product_name?: string}[]>([]);
   const { settings } = useSettings();
-  const [comboSearchTerm, setComboSearchTerm] = useState('');
-  const [barcodeBuffer, setBarcodeBuffer] = useState('');
-  const [lastCharTime, setLastCharTime] = useState(0);
+  const barcodeBufferRef = useRef('');
+  const lastCharTimeRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
+  // 1. Initial data fetch (runs once on mount)
   useEffect(() => {
     fetchProducts();
     fetchLocations();
     fetchTaras();
-    
-    // Barcode listener (Global)
+  }, []);
+
+  // 2. Barcode scanner listener (isolated with refs, never causes re-fetch loops)
+  useEffect(() => {
     const handleGlobalScan = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
@@ -109,39 +111,35 @@ export default function AdminProducts() {
       
       const currentTime = Date.now();
       
-      if (currentTime - lastCharTime > 100) {
-        setBarcodeBuffer(e.key.length === 1 ? e.key : '');
+      if (currentTime - lastCharTimeRef.current > 100) {
+        barcodeBufferRef.current = e.key.length === 1 ? e.key : '';
       } else {
         if (e.key === 'Enter') {
-          if (barcodeBuffer.length > 3) {
-            handleScanComplete(barcodeBuffer);
+          if (barcodeBufferRef.current.length > 3) {
+            const code = barcodeBufferRef.current;
+            if (isModalOpen) {
+              setSelectedProduct(prev => prev ? { ...prev, barcode: code } : null);
+            } else {
+              setSearchTerm(code);
+              const matchedProduct = allProducts.find(p => p.barcode === code);
+              if (matchedProduct) {
+                setSelectedProduct(matchedProduct);
+                if (matchedProduct.is_combo) fetchComboItems(matchedProduct.id);
+                setIsModalOpen(true);
+              }
+            }
           }
-          setBarcodeBuffer('');
+          barcodeBufferRef.current = '';
         } else if (e.key.length === 1) {
-          setBarcodeBuffer(prev => prev + e.key);
+          barcodeBufferRef.current += e.key;
         }
       }
-      setLastCharTime(currentTime);
-    };
-
-    const handleScanComplete = (code: string) => {
-      if (isModalOpen) {
-        setSelectedProduct(prev => prev ? { ...prev, barcode: code } : null);
-        return;
-      }
-
-      setSearchTerm(code);
-      const matchedProduct = products.find(p => p.barcode === code);
-      if (matchedProduct) {
-        setSelectedProduct(matchedProduct);
-        if (matchedProduct.is_combo) fetchComboItems(matchedProduct.id);
-        setIsModalOpen(true);
-      }
+      lastCharTimeRef.current = currentTime;
     };
 
     window.addEventListener('keydown', handleGlobalScan);
     return () => window.removeEventListener('keydown', handleGlobalScan);
-  }, [barcodeBuffer, lastCharTime, isModalOpen, products]);
+  }, [isModalOpen, allProducts]);
 
 
   const fetchProducts = async () => {

@@ -25,7 +25,7 @@ import {
   FileSpreadsheet,
   Globe
 } from 'lucide-react';
-import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
 import SyncStatusBadge from './SyncStatusBadge';
@@ -209,13 +209,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     { name: 'Limpeza de Dados', icon: Database, path: '/admin/cleanup' },
   ];
 
-  const handleNav = (path: string) => {
-    navigate(path);
-    if (typeof window !== 'undefined') {
-      window.location.hash = path;
-    }
-    if (window.innerWidth < 768) setIsSidebarOpen(false);
-  };
+
 
   return (
     <div className="min-h-screen bg-ink-950 text-white flex overflow-hidden" style={{ position: 'relative' }}>
@@ -268,24 +262,29 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
           <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto custom-scrollbar">
             {menuItems.map((item) => {
-              const isActive = location.pathname === item.path || (item.path !== '/admin' && location.pathname.startsWith(item.path));
               const Icon = item.icon;
               return (
-                <button
+                <NavLink
                   key={item.path}
-                  type="button"
-                  onClick={() => handleNav(item.path)}
-                  style={{ pointerEvents: 'auto' }}
-                  className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all group text-left cursor-pointer ${
+                  to={item.path}
+                  end={item.path === '/admin'}
+                  onClick={() => {
+                    if (window.innerWidth < 768) setIsSidebarOpen(false);
+                  }}
+                  className={({ isActive }) => `w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all group text-left cursor-pointer ${
                     isActive
                     ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10 font-bold'
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
-                  <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-ink-950' : 'group-hover:text-gold-500'}`} />
-                  <span className="font-medium whitespace-nowrap flex-1">{item.name}</span>
-                  {isActive && <ChevronRight className="w-4 h-4 opacity-50" />}
-                </button>
+                  {({ isActive }) => (
+                    <>
+                      <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-ink-950' : 'group-hover:text-gold-500'}`} />
+                      <span className="font-medium whitespace-nowrap flex-1">{item.name}</span>
+                      {isActive && <ChevronRight className="w-4 h-4 opacity-50" />}
+                    </>
+                  )}
+                </NavLink>
               );
             })}
           </nav>
