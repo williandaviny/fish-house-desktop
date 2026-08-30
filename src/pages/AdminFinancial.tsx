@@ -237,7 +237,7 @@ export default function AdminFinancial() {
 
       const { data: docs, error: docsErr } = await supabase
         .from('documentos_fiscais')
-        .select('id, venda_id, referencia_id, status, pdf_url, xml_url, protocolo, erro_retorno, created_at, chave, numero, serie')
+        .select('id, referencia_id, referencia_tipo, tipo_documento, status, pdf_url, xml_url, protocolo, erro_retorno, created_at, chave')
         .eq('referencia_tipo', 'venda')
         .order('created_at', { ascending: false })
         .limit(100);

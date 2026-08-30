@@ -664,7 +664,8 @@ export default function PDV() {
         const { data: currentDoc } = await supabase
           .from('documentos_fiscais')
           .select('id, status, pdf_url, erro_retorno, created_at')
-          .eq('venda_id', saleId)
+          .eq('referencia_id', saleId)
+          .eq('referencia_tipo', 'venda')
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
