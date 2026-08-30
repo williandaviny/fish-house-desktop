@@ -230,7 +230,7 @@ export default function AdminFinancial() {
     try {
       const { data: sales, error: salesErr } = await supabase
         .from('vendas')
-        .select('id, created_at, valor_total, valor_final, desconto, acrescimo, status, status_fiscal, customer_id, customers(name)')
+        .select('id, created_at, valor_total, valor_final, desconto, acrescimo, status, status_fiscal, cliente_id, customers:cliente_id(name)')
         .order('created_at', { ascending: false })
         .limit(100);
       if (salesErr) throw salesErr;
