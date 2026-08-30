@@ -654,16 +654,8 @@ export default function PDV() {
       }
 
       const invoiceId = data.doc?.id || data.doc?.flowId;
-      let pdfUrlToOpen = data.doc?.pdfUrl || data.doc?.pdf || data.doc?.urlPdf;
-
-      // Se a Edge Function já retornou PDF na resposta, abre imediatamente
-      if (pdfUrlToOpen) {
-        openNfcePdf(pdfUrlToOpen, saleId);
-        return;
-      }
 
       // 3. Supabase Realtime: reage instantaneamente quando a SEFAZ autoriza
-      //    Sem delay artificial — dispara exatamente quando o banco é atualizado.
       const docData: any = await new Promise((resolve) => {
         const channel = supabase
           .channel(`nfce-${saleId}`)
@@ -685,13 +677,13 @@ export default function PDV() {
           )
           .subscribe();
 
-        // Fallback: consulta ativa a cada 1,5s (caso o realtime não dispare a tempo)
+        // Fallback: consulta ativa a cada 1,5s
         let attempts = 0;
         const fallbackInterval = setInterval(async () => {
           attempts++;
           const { data: currentDoc } = await supabase
             .from('documentos_fiscais')
-            .select('id, status, pdf_url, erro_retorno, created_at')
+            .select('id, status, pdf_url, erro_retorno, created_at, chave')
             .eq('referencia_id', saleId)
             .eq('referencia_tipo', 'venda')
             .order('created_at', { ascending: false })
@@ -703,7 +695,6 @@ export default function PDV() {
             supabase.removeChannel(channel);
             resolve(currentDoc);
           } else if (attempts >= 10) {
-            // Timeout de 15 segundos máximo
             clearInterval(fallbackInterval);
             supabase.removeChannel(channel);
             resolve(currentDoc || null);
@@ -715,27 +706,9 @@ export default function PDV() {
         throw new Error(`REJEIÇÃO SEFAZ: ${docData.erro_retorno || 'Nota rejeitada pela SEFAZ.'}`);
       }
 
-      pdfUrlToOpen = docData?.pdf_url || pdfUrlToOpen;
-
-      if (!pdfUrlToOpen && invoiceId) {
-        const { data: fileRes } = await supabase.functions.invoke('nfe-io-invoice', {
-          body: { action: 'get_file', invoice_id: invoiceId, format: 'pdf', referencia_tipo: 'venda', referencia_id: saleId }
-        });
-        if (fileRes?.url) {
-          pdfUrlToOpen = fileRes.url;
-        } else if (fileRes?.data) {
-          const byteCharacters = atob(fileRes.data);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/pdf' });
-          pdfUrlToOpen = URL.createObjectURL(blob);
-        }
-      }
-
-      if (pdfUrlToOpen) {
-        openNfcePdf(pdfUrlToOpen, saleId);
+      const targetDocId = docData?.chave || docData?.id || invoiceId;
+      if (targetDocId) {
+        await resolveAndPrintPdf(targetDocId, saleId);
       } else {
         alert('NFC-e enviada à SEFAZ! O documento está sendo processado e você pode consultá-lo na aba Financeiro ➔ Fiscal.');
       }
@@ -746,31 +719,65 @@ export default function PDV() {
     }
   };
 
-  const openNfcePdf = (pdfUrl: string, saleId: string) => {
-    // 1. Trigger download
-    const link = document.createElement('a');
-    link.href = pdfUrl;
-    link.download = `NFCe_${saleId.slice(0, 8)}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const resolveAndPrintPdf = async (invoiceIdOrUrl: string, saleId: string) => {
+    try {
+      let blobUrl: string | null = null;
 
-    // 2. Open print preview in iframe (works inside Tauri/desktop without window.open)
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = '0';
-    iframe.src = pdfUrl;
-    document.body.appendChild(iframe);
-    iframe.onload = () => {
-      try {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-      } catch (_) {}
-    };
+      // If it's already a blob URL
+      if (invoiceIdOrUrl.startsWith('blob:')) {
+        blobUrl = invoiceIdOrUrl;
+      } else {
+        // Fetch base64 from Edge Function (which has the API key)
+        const { data: fileRes } = await supabase.functions.invoke('nfe-io-invoice', {
+          body: { action: 'get_file', invoice_id: invoiceIdOrUrl, format: 'pdf', referencia_tipo: 'venda', referencia_id: saleId }
+        });
+
+        if (fileRes?.data) {
+          const byteCharacters = atob(fileRes.data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/pdf' });
+          blobUrl = URL.createObjectURL(blob);
+        } else if (fileRes?.url && !fileRes.url.includes('api.nfse.io')) {
+          blobUrl = fileRes.url;
+        }
+      }
+
+      if (blobUrl) {
+        // 1. Download file locally
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = `NFCe_${saleId.slice(0, 8)}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        // 2. Trigger print preview via iframe
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        iframe.src = blobUrl;
+        document.body.appendChild(iframe);
+        iframe.onload = () => {
+          try {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+            setTimeout(() => document.body.removeChild(iframe), 3000);
+          } catch (_) {}
+        };
+      } else {
+        alert('NFC-e Autorizada pela SEFAZ! O PDF está disponível no Painel Fiscal.');
+      }
+    } catch (err: any) {
+      console.error('Erro ao baixar PDF:', err);
+      alert('NFC-e Autorizada! Você pode imprimir o PDF pelo Painel Fiscal.');
+    }
   };
 
   const handlePrintReceipt = async (saleId: string) => {
