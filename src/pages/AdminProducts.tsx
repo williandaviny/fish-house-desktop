@@ -707,7 +707,21 @@ export default function AdminProducts() {
                     <tr key={p.id} className="hover:bg-white/5 transition-all group">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <img src={getOptimizedImageUrl(p.image_url)} alt="" className="w-10 h-10 rounded-lg object-contain bg-gray-50/5" />
+                          <img 
+                            src={getOptimizedImageUrl(p.image_url)} 
+                            alt={p.name} 
+                            onError={(e) => {
+                              const target = e.currentTarget;
+                              if (!target.dataset.triedFallback && p.image_url) {
+                                target.dataset.triedFallback = 'true';
+                                const fileName = p.image_url.split('/').pop();
+                                target.src = `https://mqktczeqkynqqgzkbrno.supabase.co/storage/v1/object/public/products/${fileName}`;
+                              } else {
+                                target.src = 'https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&q=80';
+                              }
+                            }}
+                            className="w-10 h-10 rounded-lg object-contain bg-gray-50/5" 
+                          />
                           <div>
                             <p className="font-bold text-sm text-white">{p.name}</p>
                             {p.is_combo && <span className="text-[8px] bg-gold-500 text-ink-950 px-1 rounded font-black">COMBO</span>}

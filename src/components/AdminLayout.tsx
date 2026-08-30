@@ -122,14 +122,24 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       })
       .subscribe();
 
-    // Listen for new orders in Realtime
+    // Listen for new orders in Realtime (both orders and pedidos tables)
+    const handleNewIncomingOrder = (order: any) => {
+      console.log('🚨 NEW ORDER REALTIME EVENT:', order);
+      playOrderChime();
+      setNewOrderPopup(order);
+      sendNativeDesktopNotification(order);
+    };
+
     const ordersChannel = supabase
       .channel('admin_global_orders_realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (payload) => {
-        console.log('🚨 NEW ORDER REALTIME EVENT:', payload.new);
-        playOrderChime();
-        setNewOrderPopup(payload.new);
-        sendNativeDesktopNotification(payload.new);
+        handleNewIncomingOrder(payload.new);
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'pedidos' }, (payload) => {
+        // Se for pedido web/delivery
+        if (payload.new.origem === 'web' || payload.new.tipo === 'delivery' || payload.new.tipo_pedido === 'delivery') {
+          handleNewIncomingOrder(payload.new);
+        }
       })
       .subscribe();
 
@@ -242,7 +252,11 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               <Link
                 key={item.path}
                 to={item.path}
-                onClick={() => { if (window.innerWidth < 768) setIsSidebarOpen(false); }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate(item.path);
+                  if (window.innerWidth < 768) setIsSidebarOpen(false);
+                }}
                 className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all group ${
                   isActive 
                   ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10' 

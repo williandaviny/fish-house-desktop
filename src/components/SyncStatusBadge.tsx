@@ -12,8 +12,8 @@ export default function SyncStatusBadge() {
   });
 
   useEffect(() => {
-    // Inicia background sync
-    syncEngine.startBackgroundSync(30000);
+    // Inicia background sync a cada 2 horas
+    syncEngine.startBackgroundSync(7200000);
     const unsubscribe = syncEngine.subscribe(setStatus);
     return () => {
       unsubscribe();

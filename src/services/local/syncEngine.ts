@@ -174,8 +174,8 @@ class SyncEngine {
     }
   }
 
-  // Inicia sincronização periódica em background (ex: a cada 30 segundos)
-  public startBackgroundSync(intervalMs = 30000) {
+  // Inicia sincronização periódica em background (a cada 2 horas por padrão)
+  public startBackgroundSync(intervalMs = 7200000) {
     if (this.timer) clearInterval(this.timer);
     
     // Tenta primeiro o download inicial se estiver vazio
@@ -187,7 +187,7 @@ class SyncEngine {
       }
     }, intervalMs);
 
-    console.log(`[SyncEngine] Background sync iniciado a cada ${intervalMs / 1000}s`);
+    console.log(`[SyncEngine] Background sync programado a cada ${intervalMs / (1000 * 60)} minutos`);
   }
 
   public stopBackgroundSync() {
