@@ -67,13 +67,16 @@ async fn download_and_install_update(app: AppHandle, url: String) -> Result<(), 
     #[cfg(target_os = "windows")]
     {
         let installer_str = installer_path.to_string_lossy().to_string();
+        let current_exe_str = current_exe.to_string_lossy().to_string();
 
         let bat_content = format!(
             "@echo off\r\n\
-            timeout /t 1 /nobreak > nul\r\n\
-            start \"\" \"{installer}\"\r\n\
+            timeout /t 2 /nobreak > nul\r\n\
+            start /wait \"\" \"{installer}\" /S\r\n\
+            start \"\" \"{app}\"\r\n\
             (goto) 2>nul & del \"%~f0\"\r\n",
-            installer = installer_str
+            installer = installer_str,
+            app = current_exe_str
         );
 
         let mut bat_file = File::create(&script_path).map_err(|e| e.to_string())?;
