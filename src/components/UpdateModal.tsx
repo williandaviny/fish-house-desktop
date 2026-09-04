@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Sparkles, Download, X, CheckCircle, RefreshCw, Zap } from 'lucide-react';
 import { UpdaterService, UpdateInfo, APP_VERSION } from '../services/updater/updater';
+import { isDesktop } from '../utils/isDesktop';
 
 export const UpdateModal: React.FC = () => {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -10,6 +11,9 @@ export const UpdateModal: React.FC = () => {
   const [statusMsg, setStatusMsg] = useState<string>('');
 
   useEffect(() => {
+    // Nunca checa ou baixa executavel Windows quando estiver no navegador / nuvem
+    if (!isDesktop) return;
+
     // Checa se ha atualizacao 3 segundos apos abrir o sistema
     const timer = setTimeout(async () => {
       try {
@@ -64,7 +68,7 @@ export const UpdateModal: React.FC = () => {
     }
   };
 
-  if (!modalOpen || !updateInfo) return null;
+  if (!isDesktop || !modalOpen || !updateInfo) return null;
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[110] flex items-center justify-center p-4">

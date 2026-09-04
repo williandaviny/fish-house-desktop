@@ -3,6 +3,7 @@ import { syncEngine } from '../services/local/syncEngine';
 import { localDb } from '../services/local/localDb';
 import { motion, AnimatePresence } from 'motion/react';
 import { Fish, Database, CheckCircle2, RefreshCw } from 'lucide-react';
+import { isDesktop } from '../utils/isDesktop';
 
 export default function InitialSyncModal() {
   const [isOpen, setIsOpen] = useState(false);
@@ -11,6 +12,9 @@ export default function InitialSyncModal() {
   const [syncedCount, setSyncedCount] = useState(0);
 
   useEffect(() => {
+    // Banco local e sincronizacao offline devem rodar EXCLUSIVAMENTE no app Desktop instalavel
+    if (!isDesktop) return;
+
     // Checa se o banco local esta vazio na primeira inicializacao
     const prods = localDb.getProducts();
     if (!prods || prods.length === 0) {

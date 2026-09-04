@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { syncEngine } from '../services/local/syncEngine';
 import { LocalSyncStatus } from '../services/local/localDb';
 import { RefreshCw, CheckCircle2, CloudUpload, HardDrive, AlertTriangle } from 'lucide-react';
+import { isDesktop } from '../utils/isDesktop';
 
 export default function SyncStatusBadge() {
   const [status, setStatus] = useState<LocalSyncStatus>({
@@ -12,13 +13,17 @@ export default function SyncStatusBadge() {
   });
 
   useEffect(() => {
-    // Inicia background sync a cada 2 horas
+    if (!isDesktop) return;
+
+    // Inicia background sync a cada 2 horas apenas no app desktop
     syncEngine.startBackgroundSync(7200000);
     const unsubscribe = syncEngine.subscribe(setStatus);
     return () => {
       unsubscribe();
     };
   }, []);
+
+  if (!isDesktop) return null;
 
   const handleManualSync = async () => {
     if (status.is_syncing) return;

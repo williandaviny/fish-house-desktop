@@ -31,6 +31,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import SyncStatusBadge from './SyncStatusBadge';
 import InitialSyncModal from './InitialSyncModal';
 import { UpdateModal } from './UpdateModal';
+import { isDesktop } from '../utils/isDesktop';
 
 interface Notification {
   id: string;
@@ -213,10 +214,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   return (
     <div className="min-h-screen bg-ink-950 text-white flex overflow-hidden" style={{ position: 'relative' }}>
-      {/* Initial Local Database Sync Modal */}
-      <InitialSyncModal />
-      {/* Automatic Background Updater Modal */}
-      <UpdateModal />
+      {/* Modais exclusivos da versão Desktop instalável */}
+      {isDesktop && <InitialSyncModal />}
+      {isDesktop && <UpdateModal />}
 
       {/* Sidebar Mobile Backdrop */}
       {isSidebarOpen && (
