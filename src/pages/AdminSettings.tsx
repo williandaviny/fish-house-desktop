@@ -245,16 +245,26 @@ export default function AdminSettings() {
     try {
       const { data: prods, error: prodErr } = await supabase
         .from('products')
-        .select('id, name, price, unit, is_available, plu_codigo, category, tara_id, taras_balanca(id, codigo, descricao, peso)')
+        .select('id, name, price, unit, is_available, plu_codigo, codigo_interno, validade_dias, category, tara_id, taras_balanca(id, codigo, descricao, peso)')
         .eq('is_available', true);
       
       if (prodErr) throw prodErr;
 
-      // 1. Generate depto.txt
-      const deptoLine = deptoCode.padStart(2, '0') + deptoName.substring(0, 25).padEnd(25, ' ');
+      // Sanitizador de texto: remove acentos e caracteres especiais para compatibilidade com padrão Toledo MGV
+      const sanitizeText = (str: string) => {
+        return (str || '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-zA-Z0-9\s.,\-_/]/g, '')
+          .toUpperCase();
+      };
+
+      // 1. Generate depto.txt (Layout Toledo MGV: 2 chars código + 40 chars descrição = 42 chars por linha)
+      const cleanDepto = sanitizeText(deptoName).substring(0, 40).padEnd(40, ' ');
+      const deptoLine = deptoCode.padStart(2, '0') + cleanDepto;
       const deptoContent = deptoLine + '\r\n';
 
-      // 2. Generate tara.txt
+      // 2. Generate tara.txt (Layout Toledo MGV: N + 4 chars código + 7 chars peso + 5 zeros + 21 chars descrição = 38 chars por linha)
       const { data: taraList, error: taraErr } = await supabase
         .from('taras_balanca')
         .select('*')
@@ -266,11 +276,11 @@ export default function AdminSettings() {
       taraList?.forEach(t => {
         const codeStr = t.codigo.toString().padStart(4, '0');
         const gramsStr = Math.round(Number(t.peso) * 1000).toString().padStart(7, '0');
-        const descStr = t.descricao.substring(0, 25).padEnd(25, ' ');
+        const descStr = sanitizeText(t.descricao).substring(0, 21).padEnd(21, ' ');
         taraContent += `N${codeStr}${gramsStr}00000${descStr}\r\n`;
       });
 
-      // 3. Generate itensmgv.txt
+      // 3. Generate itensmgv.txt (Layout Toledo MGV6/MGV7 Padrão: exatamente 156 chars por linha)
       let itensContent = '';
       prods?.forEach(p => {
         let plu = p.plu_codigo || '';
@@ -280,16 +290,21 @@ export default function AdminSettings() {
         if (!plu) {
           plu = p.id.replace(/\D/g, '').substring(0, 5) || '1';
         }
-        const pluStr = plu.toString().padStart(6, '0');
+        const deptoStr = deptoCode.padStart(2, '0');
         const tipoStr = p.unit === 'kg' ? '0' : '1';
+        const pluStr = plu.toString().padStart(6, '0');
         const cents = Math.round((p.price || 0) * 100);
         const priceStr = cents.toString().padStart(6, '0');
         const valDays = (p.validade_dias || 0).toString().padStart(3, '0');
-        const descStr = p.name.substring(0, 25).padEnd(25, ' ');
+
+        const cleanName = sanitizeText(p.name);
+        const d1 = cleanName.substring(0, 25).padEnd(25, ' ');
+        const d2 = cleanName.length > 25 ? cleanName.substring(25, 50).padEnd(25, ' ') : ''.padEnd(25, ' ');
 
         let taraCodeStr = '0000';
-        if (p.taras_balanca && p.taras_balanca.codigo !== undefined) {
-          taraCodeStr = p.taras_balanca.codigo.toString().padStart(4, '0');
+        const taraObj: any = Array.isArray(p.taras_balanca) ? p.taras_balanca[0] : p.taras_balanca;
+        if (taraObj && taraObj.codigo !== undefined) {
+          taraCodeStr = taraObj.codigo.toString().padStart(4, '0');
         } else if (p.tara_id) {
           const matchedTara = taraList?.find(t => t.id === p.tara_id);
           if (matchedTara) {
@@ -297,11 +312,22 @@ export default function AdminSettings() {
           }
         }
 
-        itensContent += `${deptoCode.padStart(2, '0')}${pluStr}${tipoStr}${priceStr}${valDays}${descStr}${taraCodeStr}\r\n`;
+        // Layout rigoroso Toledo MGV (156 caracteres):
+        // [00..02] Depto (2)
+        // [02..03] Tipo: 0=peso, 1=unidade (1)
+        // [03..09] Codigo / PLU (6)
+        // [09..15] Preco em centavos (6)
+        // [15..18] Validade em dias (3)
+        // [18..43] Descricao Linha 1 (25)
+        // [43..68] Descricao Linha 2 (25)
+        // [68..118] Info Extra, Imagem, Nutricional, Flags (50)
+        // [118..122] Tara Predeterminada (4)
+        // [122..156] Fracionador, Extras, EAN, Glaciamento (34)
+        itensContent += `${deptoStr}${tipoStr}${pluStr}${priceStr}${valDays}${d1}${d2}00000000000000001100000000000000000000000000000000${taraCodeStr}0000000000000000000000000000000000\r\n`;
       });
 
       const downloadFile = (filename: string, content: string) => {
-        const blob = new Blob([content], { type: 'text/plain;charset=windows-1252' });
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
