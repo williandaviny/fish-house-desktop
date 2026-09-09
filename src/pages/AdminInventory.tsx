@@ -21,6 +21,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { getOptimizedImageUrl } from '../utils/image';
+import { useScale } from '../services/scale/useScale';
 
 type Product = {
   id: string;
@@ -101,15 +102,10 @@ export default function AdminInventory() {
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
   const [lastCharTime, setLastCharTime] = useState(0);
 
-  // Web Serial states
+  // Web Serial & Balança Toledo Hook
   const [activeWeighProduct, setActiveWeighProduct] = useState<Product | null>(null);
   const [weighTarget, setWeighTarget] = useState<'adjust' | { product_id: string } | null>(null);
-  const [serialPort, setSerialPort] = useState<any | null>(null);
-  const [serialReader, setSerialReader] = useState<any | null>(null);
-  const [scaleWeight, setScaleWeight] = useState<number>(0);
-  const [baudRate, setBaudRate] = useState<number>(9600);
-  const [scaleStatus, setScaleStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [serialError, setSerialError] = useState<string>('');
+  const scale = useScale();
 
   useEffect(() => {
     fetchInitialData();
@@ -221,90 +217,26 @@ export default function AdminInventory() {
     }
   };
 
-  const connectScale = async () => {
-    setScaleStatus('connecting');
-    setSerialError('');
-    try {
-      if (!(navigator as any).serial) {
-        throw new Error('Navegador não suporta Web Serial API. Use Google Chrome, Edge ou Opera.');
-      }
-      const port = await (navigator as any).serial.requestPort();
-      await port.open({ baudRate });
-      setSerialPort(port);
-      setScaleStatus('connected');
-      readScaleData(port);
-    } catch (err: any) {
-      console.error(err);
-      setSerialError(err.message || 'Erro ao conectar com a balança.');
-      setScaleStatus('disconnected');
+  const openWeighModal = (product: Product, target: 'adjust' | { product_id: string }) => {
+    setActiveWeighProduct(product);
+    setWeighTarget(target);
+    if (scale.status === 'connected') {
+      scale.requestWeight();
+    } else {
+      scale.connect();
     }
-  };
-
-  const disconnectScale = async () => {
-    try {
-      if (serialReader) {
-        await serialReader.cancel();
-        serialReader.releaseLock();
-      }
-      if (serialPort) {
-        await serialPort.close();
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSerialPort(null);
-      setSerialReader(null);
-      setScaleStatus('disconnected');
-      setScaleWeight(0);
-    }
-  };
-
-  const readScaleData = async (port: any) => {
-    let buffer = '';
-    try {
-      const textDecoder = new TextDecoderStream('utf-8');
-      const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
-      const reader = textDecoder.readable.getReader();
-      setSerialReader(reader);
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) {
-          buffer += value;
-          if (buffer.includes('\r') || buffer.includes('\n') || buffer.includes('\u0003')) {
-            const lines = buffer.split(/[\r\n\u0003\u0002]/);
-            for (let i = lines.length - 2; i >= 0; i--) {
-               const line = lines[i].trim();
-               if (line.length > 0) {
-                 const clean = line.replace(/[^\d.]/g, '');
-                 if (clean.includes('.')) {
-                   const weight = parseFloat(clean);
-                   if (!isNaN(weight)) { setScaleWeight(weight); break; }
-                 } else {
-                   const grams = parseInt(clean, 10);
-                   if (!isNaN(grams)) { setScaleWeight(grams / 1000); break; }
-                 }
-               }
-            }
-            buffer = lines[lines.length - 1];
-          }
-        }
-      }
-    } catch (err: any) { console.error('Error reading scale stream:', err); }
   };
 
   const handleConfirmWeight = () => {
-    if (scaleWeight > 0) {
+    if (scale.weight > 0) {
       if (weighTarget === 'adjust') {
-        setAdjustQty(scaleWeight.toFixed(3));
+        setAdjustQty(scale.weight.toFixed(3));
       } else if (weighTarget && typeof weighTarget === 'object') {
-        handleUpdateTransferQty(weighTarget.product_id, scaleWeight);
+        handleUpdateTransferQty(weighTarget.product_id, scale.weight);
       }
-      showNotification('success', `Peso confirmado: ${scaleWeight.toFixed(3)} kg`);
+      showNotification('success', `Peso confirmado: ${scale.weight.toFixed(3)} kg`);
       setActiveWeighProduct(null);
       setWeighTarget(null);
-      disconnectScale();
     }
   };
 
@@ -873,9 +805,7 @@ export default function AdminInventory() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setActiveWeighProduct(prod);
-                                    setWeighTarget({ product_id: item.product_id });
-                                    connectScale();
+                                    openWeighModal(prod, { product_id: item.product_id });
                                   }}
                                   className="p-2 bg-gold-500/10 hover:bg-gold-500/20 text-gold-500 border border-gold-500/20 rounded-xl transition-all flex items-center justify-center shrink-0"
                                   title="Ler Peso da Balança"
@@ -1002,9 +932,7 @@ export default function AdminInventory() {
                                 type="button"
                                 onClick={() => {
                                   handleAddTransferItem(p.id);
-                                  setActiveWeighProduct(p);
-                                  setWeighTarget({ product_id: p.id });
-                                  connectScale();
+                                  openWeighModal(p, { product_id: p.id });
                                 }}
                                 className="p-2.5 bg-gold-500/10 hover:bg-gold-500/20 text-gold-500 border border-gold-500/20 rounded-xl transition-all flex items-center justify-center shrink-0"
                                 title="Pesar na Balança"
@@ -1127,9 +1055,7 @@ export default function AdminInventory() {
                             onClick={() => {
                               const prod = products.find(p => p.id === adjustProduct);
                               if (prod) {
-                                setActiveWeighProduct(prod);
-                                setWeighTarget('adjust');
-                                connectScale();
+                                openWeighModal(prod, 'adjust');
                               }
                             }}
                             className="p-3 bg-gold-500/10 hover:bg-gold-500/20 text-gold-500 border border-gold-500/20 rounded-xl transition-all flex items-center justify-center shrink-0"
@@ -1284,7 +1210,7 @@ export default function AdminInventory() {
       {/* MODAL PESAGEM SERIAL */}
       {activeWeighProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div onClick={() => { setActiveWeighProduct(null); disconnectScale(); }} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+          <div onClick={() => { setActiveWeighProduct(null); setWeighTarget(null); }} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
           
           <motion.div 
             initial={{ scale: 0.95, opacity: 0 }}
@@ -1301,32 +1227,44 @@ export default function AdminInventory() {
             {/* Status Indicator */}
             <div className="flex items-center justify-between p-4 bg-ink-950 rounded-2xl border border-white/5">
               <span className="text-gray-400">Status da Balança:</span>
-              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 ${
-                scaleStatus === 'connected'
-                ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                : scaleStatus === 'connecting'
-                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse'
-                : 'bg-red-500/10 text-red-400 border border-red-500/20'
-              }`}>
-                <span className={`w-2 h-2 rounded-full ${
-                  scaleStatus === 'connected' ? 'bg-green-500' : scaleStatus === 'connecting' ? 'bg-amber-500' : 'bg-red-500'
-                }`} />
-                {scaleStatus === 'connected' ? 'Conectado' : scaleStatus === 'connecting' ? 'Conectando...' : 'Desconectado'}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 ${
+                  scale.status === 'connected'
+                  ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                  : scale.status === 'connecting'
+                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse'
+                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${
+                    scale.status === 'connected' ? 'bg-green-500' : scale.status === 'connecting' ? 'bg-amber-500' : 'bg-red-500'
+                  }`} />
+                  {scale.status === 'connected' ? 'Conectado (Toledo Prix)' : scale.status === 'connecting' ? 'Conectando...' : 'Desconectado'}
+                </span>
+                {scale.status === 'connected' && (
+                  <button
+                    type="button"
+                    onClick={() => scale.requestWeight()}
+                    className="p-1.5 bg-gold-500/10 hover:bg-gold-500/20 text-gold-500 rounded-lg transition-all"
+                    title="Ler Peso Agora"
+                  >
+                    <RefreshCcw className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Baud Rate Config */}
-            {scaleStatus === 'disconnected' && (
+            {scale.status === 'disconnected' && (
               <div className="space-y-1.5">
                 <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest block ml-1">Velocidade (Baud Rate)</label>
                 <select
-                  value={baudRate}
-                  onChange={e => setBaudRate(Number(e.target.value))}
+                  value={scale.config.baudRate}
+                  onChange={e => scale.setConfig({ baudRate: Number(e.target.value) })}
                   className="w-full bg-ink-950 border border-white/10 rounded-2xl p-4 text-white font-bold outline-none cursor-pointer"
                 >
-                  <option value={9600}>9600 bps (Padrão Toledo/Filizola)</option>
+                  <option value={2400}>2400 bps (Padrão Toledo Prix 3 Plus)</option>
+                  <option value={9600}>9600 bps</option>
                   <option value={4800}>4800 bps</option>
-                  <option value={2400}>2400 bps</option>
                   <option value={115200}>115200 bps</option>
                 </select>
               </div>
@@ -1336,22 +1274,22 @@ export default function AdminInventory() {
             <div className="bg-ink-950/80 border border-white/10 rounded-[2rem] p-8 text-center space-y-2 relative overflow-hidden">
               <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest block">Peso Atual</span>
               <span className="text-5xl font-black font-mono text-gold-500 tracking-tight block">
-                {scaleWeight.toFixed(3)}
+                {scale.weight.toFixed(3)}
               </span>
               <span className="text-sm font-black text-gray-400 uppercase tracking-widest block">kg</span>
             </div>
 
-            {serialError && (
+            {scale.error && (
               <p className="text-xs text-red-500 font-bold bg-red-500/10 border border-red-500/20 p-4 rounded-xl leading-relaxed">
-                ⚠️ {serialError}
+                ⚠️ {scale.error}
               </p>
             )}
 
             <div className="flex gap-4">
-              {scaleStatus === 'disconnected' ? (
+              {scale.status === 'disconnected' ? (
                 <button
                   type="button"
-                  onClick={connectScale}
+                  onClick={() => scale.connect(true)}
                   className="flex-1 bg-gold-500 hover:bg-gold-600 text-ink-950 font-black py-4 rounded-2xl uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-1.5"
                 >
                   Conectar Balança
@@ -1359,17 +1297,17 @@ export default function AdminInventory() {
               ) : (
                 <button
                   type="button"
-                  onClick={disconnectScale}
-                  className="flex-1 bg-red-500/10 hover:bg-red-500/20 text-red-500 font-black py-4 rounded-2xl uppercase tracking-widest text-[10px] transition-all border border-red-500/20"
+                  onClick={() => scale.requestWeight()}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-1.5"
                 >
-                  Desconectar
+                  <RefreshCcw className="w-3.5 h-3.5" /> Ler Peso
                 </button>
               )}
               <button
                 type="button"
-                disabled={scaleStatus !== 'connected' || scaleWeight <= 0}
+                disabled={scale.status !== 'connected' || scale.weight <= 0}
                 onClick={handleConfirmWeight}
-                className="flex-1 bg-green-500 disabled:opacity-50 hover:bg-green-600 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-[10px] transition-all"
+                className="flex-1 bg-green-500 disabled:opacity-50 hover:bg-green-600 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-[10px] transition-all shadow-lg shadow-green-500/10"
               >
                 Confirmar Peso
               </button>

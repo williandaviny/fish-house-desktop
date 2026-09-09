@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
+import { useScale } from '../services/scale/useScale';
 import { localDb } from '../services/local/localDb';
 import { syncEngine } from '../services/local/syncEngine';
 
@@ -142,6 +143,9 @@ export default function AdminSettings() {
     fetchSettings();
     fetchDeliveryZones();
   }, []);
+
+  // Balança Toledo Prix 3 Plus Hook
+  const scale = useScale();
 
   const [desktopRelease, setDesktopRelease] = useState<{ version: string; downloadUrl: string; sizeMb: string } | null>(null);
   const [desktopLoading, setDesktopLoading] = useState(false);
@@ -1870,7 +1874,140 @@ export default function AdminSettings() {
                   <h3 className="text-xl font-display font-bold text-white flex items-center gap-2">
                     <Barcode className="text-gold-500 w-6 h-6" /> Integração de Balança
                   </h3>
-                  <p className="text-gray-500 text-xs mt-1 font-medium">Cadastre taras e baixe arquivos de carga para balança Toledo MGV 7.</p>
+                  <p className="text-gray-500 text-xs mt-1 font-medium">Configure a balança serial de checkout (Toledo Prix 3 Plus), cadastre taras e baixe cargas para MGV 7.</p>
+                </div>
+
+                {/* Seção 0: Balança Serial de Balcão (Toledo Prix 3 Plus) */}
+                <div className="bg-ink-950/60 p-6 md:p-8 rounded-3xl border border-white/10 space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                    <div>
+                      <h4 className="text-sm text-gold-500 font-bold uppercase tracking-wider flex items-center gap-2">
+                        <Barcode className="w-4 h-4" /> Balança de Balcão / Checkout (Toledo Prix 3 Plus)
+                      </h4>
+                      <p className="text-[11px] text-gray-400 mt-0.5">Comunicação serial RS-232 / USB para pesagem em tempo real no PDV e Estoque.</p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 ${
+                        scale.status === 'connected'
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : scale.status === 'connecting'
+                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse'
+                          : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                      }`}>
+                        <span className={`w-2 h-2 rounded-full ${
+                          scale.status === 'connected' ? 'bg-emerald-500' : scale.status === 'connecting' ? 'bg-amber-500' : 'bg-red-500'
+                        }`} />
+                        {scale.status === 'connected' ? 'Conectado (Porta Ativa)' : scale.status === 'connecting' ? 'Conectando...' : 'Desconectado'}
+                      </span>
+
+                      {scale.status === 'disconnected' ? (
+                        <button
+                          type="button"
+                          onClick={() => scale.connect(true)}
+                          className="bg-gold-500 hover:bg-gold-600 text-ink-950 font-black px-4 py-2 rounded-xl uppercase tracking-wider text-[10px] transition-all flex items-center gap-1.5 shadow-lg shadow-gold-500/10"
+                        >
+                          Conectar Balança
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => scale.disconnect()}
+                          className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-black px-4 py-2 rounded-xl uppercase tracking-wider text-[10px] transition-all"
+                        >
+                          Desconectar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Configurações da Porta Serial */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest block ml-1">Velocidade (Baud Rate)</label>
+                      <select
+                        value={scale.config.baudRate}
+                        onChange={e => scale.setConfig({ baudRate: Number(e.target.value) })}
+                        className="w-full bg-ink-950 border border-white/10 rounded-2xl p-4 text-white font-bold outline-none cursor-pointer"
+                      >
+                        <option value={2400}>2400 bps (Padrão Toledo Prix 3 Plus)</option>
+                        <option value={9600}>9600 bps</option>
+                        <option value={4800}>4800 bps</option>
+                        <option value={115200}>115200 bps</option>
+                      </select>
+                      <p className="text-[10px] text-gray-500 ml-1">Toledo 3Plus de fábrica utiliza 2400 bps.</p>
+                    </div>
+
+                    <div className="space-y-3 flex flex-col justify-center bg-white/5 p-4 rounded-2xl border border-white/5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs font-bold text-white">Monitorar a Balança</p>
+                          <p className="text-[10px] text-gray-500">Leitura contínua automática (polling ENQ 0x05)</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={scale.config.autoPoll}
+                            onChange={e => scale.setConfig({ autoPoll: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-gray-400 peer-checked:after:bg-gold-500 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-gold-500/20" />
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <div>
+                          <p className="text-xs font-bold text-white">Auto-reconectar</p>
+                          <p className="text-[10px] text-gray-500">Reconecta silenciosamente ao iniciar o sistema</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={scale.config.autoConnect}
+                            onChange={e => scale.setConfig({ autoConnect: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-gray-400 peer-checked:after:bg-gold-500 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-gold-500/20" />
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Mostrador Digital & Teste */}
+                    <div className="bg-black/60 p-5 rounded-2xl border border-white/10 flex flex-col justify-between">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Peso ao Vivo</span>
+                        <button
+                          type="button"
+                          onClick={() => scale.requestWeight()}
+                          disabled={scale.status !== 'connected'}
+                          className="text-[10px] font-bold text-gold-500 hover:text-gold-400 bg-gold-500/10 hover:bg-gold-500/20 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 uppercase disabled:opacity-40"
+                        >
+                          <RefreshCcw className="w-3 h-3" /> Ler Peso
+                        </button>
+                      </div>
+
+                      <div className="text-center py-1">
+                        <span className="text-4xl font-black font-mono text-gold-500 tracking-tight">
+                          {scale.status === 'connected' ? scale.weight.toFixed(3) : '---'}
+                        </span>
+                        <span className="text-xs font-black text-gray-500 uppercase ml-2">kg</span>
+                      </div>
+
+                      <div className="pt-2 border-t border-white/5 flex justify-between items-center">
+                        <span className="text-[9px] text-gray-500 uppercase font-mono">Última Resposta:</span>
+                        <span className="text-[10px] text-gray-300 font-mono font-bold bg-white/5 px-2 py-0.5 rounded">
+                          {scale.rawResponse || 'Nenhuma leitura'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {scale.error && (
+                    <p className="text-xs text-red-400 font-bold bg-red-500/10 border border-red-500/20 p-3 rounded-xl leading-relaxed flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                      {scale.error}
+                    </p>
+                  )}
                 </div>
 
                 {/* Seção 1: Configuração de Códigos de Barras e Gerador */}

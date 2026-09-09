@@ -32,6 +32,7 @@ import { TefConfig } from '../services/tef/types';
 import { localDb } from '../services/local/localDb';
 import { syncEngine } from '../services/local/syncEngine';
 import { downloadFiscalDocumentBlob, triggerPrintAndDownload } from '../services/fiscal/fiscalService';
+import { useScale } from '../services/scale/useScale';
 
 type Product = {
   id: string;
@@ -91,6 +92,17 @@ export default function PDV() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedProductForWeight, setSelectedProductForWeight] = useState<Product | null>(null);
   const [manualWeight, setManualWeight] = useState<string>('1.000');
+  const [isManualWeightEdited, setIsManualWeightEdited] = useState(false);
+
+  // Balança Toledo Prix 3 Plus Hook
+  const scale = useScale();
+
+  // Atualiza automaticamente o peso do formulário com o peso da balança em tempo real se o usuário não digitou manualmente
+  useEffect(() => {
+    if (selectedProductForWeight && !isManualWeightEdited && scale.status === 'connected' && scale.weight > 0) {
+      setManualWeight(scale.weight.toFixed(3));
+    }
+  }, [selectedProductForWeight, scale.weight, scale.status, isManualWeightEdited]);
   
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -369,7 +381,15 @@ export default function PDV() {
   const handleProductSelected = (product: Product) => {
     if (product.unit === 'kg') {
       setSelectedProductForWeight(product);
-      setManualWeight('1.000');
+      setIsManualWeightEdited(false);
+      if (scale.status === 'connected') {
+        if (scale.weight > 0) {
+          setManualWeight(scale.weight.toFixed(3));
+        }
+        scale.requestWeight();
+      } else {
+        setManualWeight('1.000');
+      }
     } else {
       addToCart(product, 1);
     }
@@ -1054,6 +1074,39 @@ export default function PDV() {
             <span className="bg-green-500/10 text-green-500 border border-green-500/20 px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 animate-pulse">
               <Clock className="w-3.5 h-3.5" /> Caixa Aberto
             </span>
+
+            {/* Indicador / Botão de Conexão com a Balança Toledo */}
+            <button
+              type="button"
+              onClick={() => {
+                if (scale.status === 'connected') {
+                  scale.requestWeight();
+                } else {
+                  scale.connect(true);
+                }
+              }}
+              title={
+                scale.status === 'connected'
+                  ? `Balança Toledo Conectada (${scale.weight.toFixed(3)} kg) - Clique para forçar leitura`
+                  : 'Clique para conectar balança Toledo'
+              }
+              className={`px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all border ${
+                scale.status === 'connected'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                  : scale.status === 'connecting'
+                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse'
+                  : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
+              }`}
+            >
+              <Barcode className="w-3.5 h-3.5 text-gold-500" />
+              {scale.status === 'connected' ? (
+                <span>Balança: <strong className="text-white font-mono">{scale.weight.toFixed(3)} kg</strong></span>
+              ) : scale.status === 'connecting' ? (
+                <span>Conectando Balança...</span>
+              ) : (
+                <span>Conectar Balança</span>
+              )}
+            </button>
             <form 
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1425,7 +1478,7 @@ export default function PDV() {
         </div>
       </div>
 
-      {/* WEIGHT PROMPT MODAL */}
+      {/* WEIGHT PROMPT MODAL COM BALANÇA TOLEDO */}
       <AnimatePresence>
         {selectedProductForWeight && (
           <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
@@ -1434,37 +1487,123 @@ export default function PDV() {
               initial={{ opacity: 0, scale: 0.95 }} 
               animate={{ opacity: 1, scale: 1 }} 
               exit={{ opacity: 0, scale: 0.95 }}
-              className="relative w-full max-w-sm bg-ink-900 border border-white/10 rounded-[2rem] p-6 shadow-2xl overflow-hidden"
+              className="relative w-full max-w-md bg-ink-900 border border-white/10 rounded-[2.5rem] p-6 shadow-2xl overflow-hidden space-y-5"
             >
-              <h3 className="text-lg font-display font-black text-white uppercase tracking-tight mb-2">Informe o Peso</h3>
-              <p className="text-xs text-gray-500 mb-6">{selectedProductForWeight.name}</p>
+              <div>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-lg font-display font-black text-white uppercase tracking-tight flex items-center gap-2">
+                      <Barcode className="w-5 h-5 text-gold-500" /> Pesagem de Produto
+                    </h3>
+                    <p className="text-xs text-gray-400 mt-0.5">{selectedProductForWeight.name}</p>
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-gold-500/10 text-gold-500 border border-gold-500/20 px-2.5 py-1 rounded-lg">
+                    R$ {selectedProductForWeight.price.toFixed(2)} / kg
+                  </span>
+                </div>
+              </div>
 
-              <form onSubmit={handleWeightSubmit} className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest ml-1">Quantidade em KG</label>
+              {/* CARD DE STATUS E LEITURA DA BALANÇA TOLEDO */}
+              <div className="bg-ink-950/80 border border-white/10 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${
+                      scale.status === 'connected' ? 'bg-emerald-500 animate-pulse' : scale.status === 'connecting' ? 'bg-amber-500 animate-pulse' : 'bg-red-500'
+                    }`} />
+                    {scale.status === 'connected' ? 'Balança Toledo (Ativa)' : scale.status === 'connecting' ? 'Conectando à Balança...' : 'Balança Desconectada'}
+                  </span>
+                  
+                  {scale.status === 'connected' ? (
+                    <button
+                      type="button"
+                      onClick={() => scale.requestWeight()}
+                      className="text-[10px] font-bold text-gold-500 hover:text-gold-400 bg-gold-500/10 hover:bg-gold-500/20 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 uppercase"
+                    >
+                      <RefreshCcw className="w-3 h-3" /> Ler Peso
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => scale.connect(true)}
+                      className="text-[10px] font-bold text-white bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg transition-all uppercase"
+                    >
+                      Conectar Balança
+                    </button>
+                  )}
+                </div>
+
+                {/* Display Digital do Peso da Balança */}
+                <div className="bg-black/60 rounded-xl p-4 border border-white/5 flex items-center justify-between">
+                  <div>
+                    <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider block">Peso na Balança</span>
+                    <span className="text-4xl font-black font-mono text-gold-500 tracking-tight block">
+                      {scale.status === 'connected' ? scale.weight.toFixed(3) : '---'}
+                    </span>
+                  </div>
+                  <div className="text-right flex flex-col items-end gap-1">
+                    <span className="text-xs font-black text-gray-500 uppercase tracking-widest">KG</span>
+                    {scale.status === 'connected' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManualWeight(scale.weight.toFixed(3));
+                          setIsManualWeightEdited(false);
+                        }}
+                        className="text-[9px] font-black uppercase tracking-wider bg-gold-500 text-ink-950 px-2 py-1 rounded-md shadow-sm active:scale-95 transition-all"
+                      >
+                        Aplicar Peso
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {scale.error && (
+                  <p className="text-[10px] text-red-400 font-bold bg-red-500/10 border border-red-500/20 p-2 rounded-lg leading-tight">
+                    ⚠️ {scale.error}
+                  </p>
+                )}
+              </div>
+
+              {/* FORMULÁRIO DE CONFIRMAÇÃO DO PESO */}
+              <form onSubmit={handleWeightSubmit} className="space-y-4">
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center ml-1">
+                    <label className="text-[10px] text-gray-400 uppercase font-black tracking-widest">
+                      Peso a Lançar (KG)
+                    </label>
+                    <span className="text-[10px] text-gray-400 font-bold">
+                      Subtotal: <strong className="text-white">R$ {((Number(manualWeight) || 0) * selectedProductForWeight.price).toFixed(2)}</strong>
+                    </span>
+                  </div>
                   <input 
                     type="number" 
                     step="0.001" 
+                    min="0.001"
+                    required
                     value={manualWeight} 
-                    onChange={e => setManualWeight(e.target.value)} 
-                    className="w-full bg-ink-950 border border-white/10 rounded-xl py-3 px-4 text-xl font-bold text-center text-white focus:border-gold-500 focus:outline-none"
+                    onChange={e => {
+                      setManualWeight(e.target.value);
+                      setIsManualWeightEdited(true);
+                    }} 
+                    className="w-full bg-ink-950 border border-white/10 rounded-2xl py-3 px-4 text-2xl font-bold text-center text-white focus:border-gold-500 focus:outline-none font-mono"
                     autoFocus
                   />
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex gap-3 pt-2">
                   <button 
                     type="button" 
                     onClick={() => setSelectedProductForWeight(null)}
-                    className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 font-bold py-3 rounded-xl uppercase tracking-wider text-xs"
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 font-bold py-3.5 rounded-xl uppercase tracking-wider text-xs transition-all"
                   >
                     Cancelar
                   </button>
                   <button 
                     type="submit" 
-                    className="flex-1 bg-gold-500 hover:bg-gold-600 text-ink-950 font-black py-3 rounded-xl uppercase tracking-wider text-xs"
+                    disabled={!manualWeight || Number(manualWeight) <= 0}
+                    className="flex-1 bg-gold-500 hover:bg-gold-600 disabled:opacity-50 text-ink-950 font-black py-3.5 rounded-xl uppercase tracking-wider text-xs transition-all shadow-lg shadow-gold-500/10"
                   >
-                    Confirmar
+                    Confirmar Peso
                   </button>
                 </div>
               </form>

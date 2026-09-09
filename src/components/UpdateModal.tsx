@@ -38,29 +38,41 @@ export const UpdateModal: React.FC = () => {
       setStatusMsg('Conectando e iniciando download...');
       setProgresso(2);
 
-      const { invoke } = await import('@tauri-apps/api/core');
-      const { listen } = await import('@tauri-apps/api/event');
+      const tauri = (window as any).__TAURI__;
+      const invoke = tauri?.core?.invoke || tauri?.invoke || (window as any).__TAURI_INTERNALS__?.invoke;
+      const listen = tauri?.event?.listen;
 
-      // Escuta o evento de progresso vindo do Rust
-      const unlisten = await listen<number>('update-progress', (event) => {
-        const pct = event.payload;
-        setProgresso(pct);
-        if (pct < 100) {
-          setStatusMsg(`Baixando atualização: ${pct}% concluído...`);
-        } else {
-          setStatusMsg('Download finalizado! Instalando e reiniciando...');
-        }
-      });
+      if (!invoke) {
+        throw new Error('Ambiente nativo Tauri indisponível.');
+      }
+
+      let unlisten: any = null;
+      if (listen) {
+        // Escuta o evento de progresso vindo do Rust
+        unlisten = await listen('update-progress', (event: any) => {
+          const pct = event.payload;
+          setProgresso(pct);
+          if (pct < 100) {
+            setStatusMsg(`Baixando atualização: ${pct}% concluído...`);
+          } else {
+            setStatusMsg('Download finalizado! Instalando e reiniciando...');
+          }
+        });
+      }
 
       // Dispara o download nativo em segundo plano
       await invoke('download_and_install_update', { url: targetUrl });
-      unlisten();
+      if (unlisten) unlisten();
     } catch (err: any) {
       console.error('Erro na atualizacao nativa, abrindo navegador como fallback:', err);
       setStatusMsg('Redirecionando para download...');
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('open_url', { url: targetUrl });
+        const invoke = (window as any).__TAURI__?.core?.invoke || (window as any).__TAURI__?.invoke || (window as any).__TAURI_INTERNALS__?.invoke;
+        if (invoke) {
+          await invoke('open_url', { url: targetUrl });
+        } else {
+          window.open(targetUrl, '_blank');
+        }
       } catch {
         window.open(targetUrl, '_blank');
       }
