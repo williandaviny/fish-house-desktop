@@ -89,6 +89,7 @@ export default function AdminProducts() {
   const [isUploading, setIsUploading] = useState(false);
   const [replenishValues, setReplenishValues] = useState<Record<string, number>>({});
   const [comboItems, setComboItems] = useState<{child_product_id: string, quantity: number, product_name?: string}[]>([]);
+  const [comboSearchTerm, setComboSearchTerm] = useState('');
   const { settings } = useSettings();
   const barcodeBufferRef = useRef('');
   const lastCharTimeRef = useRef(0);

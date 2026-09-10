@@ -23,6 +23,7 @@ import {
   Warehouse,
   TrendingUp,
   FileSpreadsheet,
+  Layers,
   Globe
 } from 'lucide-react';
 import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
@@ -201,6 +202,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     { name: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
     { name: 'PDV', icon: Calculator, path: '/admin/pdv' },
     { name: 'Estoque', icon: Warehouse, path: '/admin/estoque' },
+    { name: 'Industrialização', icon: Layers, path: '/admin/industrializacao' },
     { name: 'Compras', icon: FileSpreadsheet, path: '/admin/compras' },
     { name: 'Financeiro', icon: TrendingUp, path: '/admin/financeiro' },
     { name: 'Pedidos', icon: ShoppingBag, path: '/admin/pedidos' },

@@ -8,7 +8,7 @@ export async function downloadFiscalDocumentBlob(
   invoiceIdOrChave: string,
   format: 'pdf' | 'xml',
   saleId?: string
-): Promise<{ blobUrl: string; filename: string } | null> {
+): Promise<{ blobUrl: string; filename: string; directUrl?: string | null } | null> {
   try {
     if (!invoiceIdOrChave) return null;
 

@@ -16,6 +16,7 @@ import AdminDatabaseCleanup from './pages/AdminDatabaseCleanup';
 import PDV from './pages/PDV';
 import AdminInventory from './pages/AdminInventory';
 import AdminPurchases from './pages/AdminPurchases';
+import AdminIndustrialization from './pages/AdminIndustrialization';
 import AdminFinancial from './pages/AdminFinancial';
 import AdminLayout from './components/AdminLayout';
 import PublicLayout from './components/PublicLayout';
@@ -74,6 +75,7 @@ export default function App() {
               <Route index element={<AdminDashboard />} />
               <Route path="pdv" element={<PDV />} />
               <Route path="estoque" element={<AdminInventory />} />
+              <Route path="industrializacao" element={<AdminIndustrialization />} />
               <Route path="compras" element={<AdminPurchases />} />
               <Route path="financeiro" element={<AdminFinancial />} />
               <Route path="pedidos" element={<AdminOrders />} />

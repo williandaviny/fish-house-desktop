@@ -120,7 +120,7 @@ export default function WholesaleCatalogPage() {
       const val = Number(settingsData?.wholesale_discount_value) || 0;
 
       // 2. Fetch products
-      let query = supabase.from('products').select('id, name, description, price, price_wholesale, image_url, unit, is_available, category, is_combo, is_featured, stock').eq('is_available', true);
+      let query = supabase.from('products').select('id, name, description, price, price_wholesale, wholesale_min_qty, image_url, unit, is_available, category, is_combo, is_featured, stock').eq('is_available', true);
       
       // If there is no global rule, only show manually configured ones
       if (type === 'none' || val <= 0) {

@@ -175,7 +175,32 @@ export default function AdminPurchases() {
     return () => window.removeEventListener('keydown', handleGlobalScan);
   }, [barcodeBuffer, lastCharTime, products, purchaseItems, activeTab]);
 
+  const playBeep = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1200, ctx.currentTime);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.1);
+    } catch (_) {}
+  };
+
   const handleBarcodeScanned = (code: string) => {
+    // 0. Reconhecimento automático de Chave de Acesso DANFE (44 dígitos)
+    if (code.length === 44 && /^\d{44}$/.test(code)) {
+      playBeep();
+      setActiveTab('import_xml');
+      setAccessKeyInput(code);
+      handleImportByAccessKey(code);
+      return;
+    }
+
     if (activeTab !== 'new_purchase') return;
 
     if (code.length === 13 && code.startsWith('2')) {
@@ -361,19 +386,20 @@ export default function AdminPurchases() {
 </nfeProc>`;
   };
 
-  const handleImportByAccessKey = async () => {
-    if (accessKeyInput.length !== 44) {
+  const handleImportByAccessKey = async (keyParam?: string) => {
+    const key = (keyParam || accessKeyInput).trim();
+    if (key.length !== 44) {
       showNotification('error', 'A chave de acesso deve possuir exatamente 44 dígitos.');
       return;
     }
     
     setIsFetchingKey(true);
-    showNotification('success', 'Conectando à SEFAZ e buscando XML...');
+    showNotification('success', 'Conectando à SEFAZ e importando XML da Nota Fiscal...');
     
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
     try {
-      const xml = generateMockNFeXML(accessKeyInput);
+      const xml = generateMockNFeXML(key);
       const parsed = parseNFXML(xml);
       setParsedInvoice(parsed);
       
@@ -1413,25 +1439,47 @@ export default function AdminPurchases() {
 
                   {/* IMPORTAÇÃO POR CHAVE DE ACESSO */}
                   <div className="border-t border-white/5 pt-6 space-y-4">
-                    <p className="text-xs text-gray-400 text-center font-bold uppercase tracking-wider">Ou digite a Chave de Acesso (44 dígitos)</p>
+                    <div className="flex items-center justify-center gap-2">
+                      <Barcode className="w-4 h-4 text-gold-500 animate-pulse" />
+                      <p className="text-xs text-gray-300 text-center font-bold uppercase tracking-wider">
+                        Chave de Acesso da DANFE (44 dígitos) ou Leitor de Barras
+                      </p>
+                    </div>
                     <div className="flex flex-col sm:flex-row gap-3">
-                      <input 
-                        type="text" 
-                        maxLength={44}
-                        placeholder="Chave de Acesso (44 dígitos)" 
-                        value={accessKeyInput}
-                        onChange={e => setAccessKeyInput(e.target.value.replace(/\D/g, ''))}
-                        className="flex-1 bg-ink-950 border border-white/10 rounded-xl px-4 py-3 text-xs font-mono text-white placeholder:text-gray-600 focus:outline-none focus:border-gold-500"
-                      />
+                      <div className="relative flex-1">
+                        <input 
+                          type="text" 
+                          maxLength={44}
+                          placeholder="Cole ou leia o código de barras da DANFE (44 dígitos)" 
+                          value={accessKeyInput}
+                          onChange={e => {
+                            const val = e.target.value.replace(/\D/g, '');
+                            setAccessKeyInput(val);
+                            if (val.length === 44) {
+                              handleImportByAccessKey(val);
+                            }
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && accessKeyInput.length === 44) {
+                              handleImportByAccessKey();
+                            }
+                          }}
+                          className="w-full bg-ink-950 border border-white/10 rounded-xl px-4 py-3 pl-10 text-xs font-mono text-white placeholder:text-gray-600 focus:outline-none focus:border-gold-500"
+                        />
+                        <Barcode className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      </div>
                       <button
                         type="button"
-                        onClick={handleImportByAccessKey}
+                        onClick={() => handleImportByAccessKey()}
                         disabled={accessKeyInput.length !== 44 || isFetchingKey}
-                        className="bg-gold-500 hover:bg-gold-600 disabled:opacity-50 text-ink-950 font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shrink-0"
+                        className="bg-gold-500 hover:bg-gold-600 disabled:opacity-50 text-ink-950 font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-lg shadow-gold-500/10"
                       >
-                        {isFetchingKey ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : 'Buscar Nota'}
+                        {isFetchingKey ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : '⚡ Buscar e Importar'}
                       </button>
                     </div>
+                    <p className="text-[10px] text-gray-500 text-center">
+                      Ao aproximar o leitor de código de barras na DANFE impressa, a nota é identificada e importada automaticamente.
+                    </p>
                   </div>
                 </div>
               ) : (
@@ -1569,14 +1617,20 @@ export default function AdminPurchases() {
                                       ))}
                                     </select>
                                     {internalId ? (
-                                      <span className="text-[9px] text-green-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                                        🟢 Vinculado: {internalProd?.name}
-                                      </span>
-                                    ) : (
-                                      <span className="text-[9px] text-yellow-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                                        ⚠️ Sem correspondência (Mapeamento Obrigatório)
-                                      </span>
-                                    )}
+                                       internalProd?.barcode && item.cEAN && internalProd.barcode === item.cEAN ? (
+                                         <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md w-fit">
+                                           ⚡ EAN Reconhecido: {internalProd?.name}
+                                         </span>
+                                       ) : (
+                                         <span className="text-[9px] text-green-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                                           🟢 Vinculado: {internalProd?.name}
+                                         </span>
+                                       )
+                                     ) : (
+                                       <span className="text-[9px] text-yellow-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                                         ⚠️ Sem correspondência (Selecione o produto interno)
+                                       </span>
+                                     )}
                                   </div>
                                 </td>
 

@@ -17,11 +17,21 @@ import {
   Layers,
   ArrowRightLeft,
   ExternalLink,
-  Printer
+  Printer,
+  Repeat,
+  RotateCcw,
+  Search,
+  Download,
+  Trash2,
+  Bell,
+  CheckCircle,
+  CalendarDays
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { downloadFiscalDocumentBlob, triggerPrintAndDownload } from '../services/fiscal/fiscalService';
+import { LiquidationModal } from '../components/financial/LiquidationModal';
+import { RecurringExpensesManager } from '../components/financial/RecurringExpensesManager';
 
 type Company = {
   id: string;
@@ -42,6 +52,14 @@ type AccountsPayable = {
   vencimento: string;
   status: 'pendente' | 'pago' | 'atrasado' | 'cancelado';
   data_pagamento?: string;
+  forma_pagamento?: string;
+  valor_pago?: number;
+  juros_multa?: number;
+  desconto?: number;
+  documento_numero?: string;
+  chave_nfe?: string;
+  observacoes?: string;
+  recorrente_id?: string;
   fornecedores?: { nome_fantasia: string; razao_social: string };
   empresas?: { nome_fantasia: string };
 };
@@ -54,6 +72,11 @@ type AccountsReceivable = {
   vencimento: string;
   status: 'pendente' | 'pago' | 'atrasado' | 'cancelado';
   data_recebimento?: string;
+  forma_pagamento?: string;
+  valor_pago?: number;
+  juros_multa?: number;
+  desconto?: number;
+  observacoes?: string;
   cliente_nome?: string;
   empresas?: { nome_fantasia: string };
 };
@@ -72,7 +95,7 @@ type CaixaLog = {
 };
 
 export default function AdminFinancial() {
-  const [activeTab, setActiveTab] = useState<'ledger' | 'receivables' | 'payables' | 'caixas' | 'fiscal'>('ledger');
+  const [activeTab, setActiveTab] = useState<'payables' | 'receivables' | 'recorrentes' | 'ledger' | 'caixas' | 'fiscal'>('payables');
   const [loading, setLoading] = useState(true);
   
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -90,10 +113,19 @@ export default function AdminFinancial() {
   const [emittingSaleId, setEmittingSaleId] = useState<string | null>(null);
   const [loadingDocId, setLoadingDocId] = useState<string | null>(null);
 
-  // Filter States
+  // Advanced Conta Azul Filter States
   const [filterCompany, setFilterCompany] = useState('all');
-  const [filterPeriod, setFilterPeriod] = useState<'all' | '30d' | 'this_month' | 'today'>('this_month');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'pendente' | 'pago'>('all');
+  const [filterPeriod, setFilterPeriod] = useState<'all' | 'today' | 'this_week' | 'this_month' | 'next_month' | 'custom'>('this_month');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'vencidas' | 'vence_hoje' | 'a_vencer' | 'pago'>('all');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Liquidation Modal State
+  const [activeLiquidation, setActiveLiquidation] = useState<{
+    item: AccountsPayable | AccountsReceivable;
+    type: 'payable' | 'receivable';
+  } | null>(null);
 
   // Launch Modals
   const [isPayableModalOpen, setIsPayableModalOpen] = useState(false);
@@ -401,43 +433,111 @@ export default function AdminFinancial() {
     }
   }, [activeTab]);
 
-  // Quick Action: Pay a Bill
-  const handlePayBill = async (id: string) => {
-    try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const { error } = await supabase
-        .from('contas_pagar')
-        .update({
-          status: 'pago',
-          data_pagamento: todayStr
-        })
-        .eq('id', id);
+  // Today's date reference
+  const todayStr = new Date().toISOString().split('T')[0];
 
-      if (error) throw error;
-      showNotification('success', 'Conta a Pagar baixada como PAGO!');
+  // Liquidation Confirmation
+  const handleConfirmLiquidation = async (data: {
+    paymentDate: string;
+    finalValue: number;
+    paymentMethod: string;
+    jurosMulta: number;
+    desconto: number;
+    notes: string;
+  }) => {
+    if (!activeLiquidation) return;
+    const { item, type } = activeLiquidation;
+
+    try {
+      if (type === 'payable') {
+        const { error } = await supabase
+          .from('contas_pagar')
+          .update({
+            status: 'pago',
+            data_pagamento: data.paymentDate,
+            valor_pago: data.finalValue,
+            forma_pagamento: data.paymentMethod,
+            juros_multa: data.jurosMulta,
+            desconto: data.desconto,
+            observacoes: data.notes || (item as AccountsPayable).observacoes || null
+          })
+          .eq('id', item.id);
+
+        if (error) throw error;
+        showNotification('success', `Conta "${item.descricao}" baixada com sucesso como PAGA!`);
+      } else {
+        const { error } = await supabase
+          .from('contas_receber')
+          .update({
+            status: 'pago',
+            data_recebimento: data.paymentDate,
+            valor_pago: data.finalValue,
+            forma_pagamento: data.paymentMethod,
+            juros_multa: data.jurosMulta,
+            desconto: data.desconto,
+            observacoes: data.notes || (item as AccountsReceivable).observacoes || null
+          })
+          .eq('id', item.id);
+
+        if (error) throw error;
+        showNotification('success', `Conta "${item.descricao}" baixada com sucesso como RECEBIDA!`);
+      }
+
       await fetchFinancialRecords();
     } catch (err: any) {
-      showNotification('error', 'Falha ao baixar conta: ' + err.message);
+      showNotification('error', 'Falha ao liquidar conta: ' + err.message);
+    } finally {
+      setActiveLiquidation(null);
     }
   };
 
-  // Quick Action: Receive an Account
-  const handleReceiveAccount = async (id: string) => {
+  // Reopen / Estornar Title
+  const handleReopenBill = async (id: string, type: 'payable' | 'receivable') => {
+    if (!confirm('Deseja estornar esta baixa e reabrir o título como PENDENTE?')) return;
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const { error } = await supabase
-        .from('contas_receber')
-        .update({
-          status: 'pago',
-          data_recebimento: todayStr
-        })
-        .eq('id', id);
-
-      if (error) throw error;
-      showNotification('success', 'Conta a Receber baixada como RECEBIDO!');
+      if (type === 'payable') {
+        const { error } = await supabase
+          .from('contas_pagar')
+          .update({
+            status: 'pendente',
+            data_pagamento: null,
+            valor_pago: null
+          })
+          .eq('id', id);
+        if (error) throw error;
+        showNotification('success', 'Conta a Pagar reaberta como PENDENTE!');
+      } else {
+        const { error } = await supabase
+          .from('contas_receber')
+          .update({
+            status: 'pendente',
+            data_recebimento: null,
+            valor_pago: null
+          })
+          .eq('id', id);
+        if (error) throw error;
+        showNotification('success', 'Conta a Receber reaberta como PENDENTE!');
+      }
       await fetchFinancialRecords();
     } catch (err: any) {
-      showNotification('error', 'Falha ao receber conta: ' + err.message);
+      showNotification('error', 'Falha ao reabrir conta: ' + err.message);
+    }
+  };
+
+  // Delete Bill
+  const handleDeleteBill = async (id: string, type: 'payable' | 'receivable') => {
+    if (!confirm('Deseja realmente excluir este lançamento financeiro?')) return;
+    try {
+      const table = type === 'payable' ? 'contas_pagar' : 'contas_receber';
+      const { error } = await supabase
+        .from(table)
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      showNotification('success', 'Lançamento excluído com sucesso.');
+      await fetchFinancialRecords();
+    } catch (err: any) {
+      showNotification('error', 'Falha ao excluir lançamento: ' + err.message);
     }
   };
 
@@ -517,40 +617,106 @@ export default function AdminFinancial() {
     }
   };
 
-  // Filter Utilities
-  const filterByPeriod = (recordDateStr: string) => {
+  // Advanced Date Filter Utility
+  const filterByPeriod = (recordDateStr?: string) => {
     if (filterPeriod === 'all') return true;
-    const date = new Date(recordDateStr);
+    if (!recordDateStr) return false;
+    const dateStr = recordDateStr.substring(0, 10);
     const now = new Date();
     
     if (filterPeriod === 'today') {
-      return date.toDateString() === now.toDateString();
+      return dateStr === todayStr;
+    }
+    if (filterPeriod === 'this_week') {
+      const curr = new Date();
+      const firstDay = new Date(curr.setDate(curr.getDate() - curr.getDay() + (curr.getDay() === 0 ? -6 : 1))); // monday
+      const lastDay = new Date(firstDay);
+      lastDay.setDate(lastDay.getDate() + 6); // sunday
+      const fStr = firstDay.toISOString().split('T')[0];
+      const lStr = lastDay.toISOString().split('T')[0];
+      return dateStr >= fStr && dateStr <= lStr;
     }
     if (filterPeriod === 'this_month') {
-      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+      const curYear = now.getFullYear();
+      const curMonth = String(now.getMonth() + 1).padStart(2, '0');
+      return dateStr.startsWith(`${curYear}-${curMonth}`);
     }
-    if (filterPeriod === '30d') {
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      return date >= thirtyDaysAgo;
+    if (filterPeriod === 'next_month') {
+      let nextMonth = now.getMonth() + 2;
+      let nextYear = now.getFullYear();
+      if (nextMonth > 12) {
+        nextMonth = 1;
+        nextYear += 1;
+      }
+      return dateStr.startsWith(`${nextYear}-${String(nextMonth).padStart(2, '0')}`);
+    }
+    if (filterPeriod === 'custom') {
+      if (customStartDate && dateStr < customStartDate) return false;
+      if (customEndDate && dateStr > customEndDate) return false;
+      return true;
     }
     return true;
   };
 
+  // Status Filter Helpers
+  const matchesPayableStatus = (p: AccountsPayable) => {
+    if (filterStatus === 'all') return true;
+    if (filterStatus === 'pago') return p.status === 'pago';
+    
+    // Non-paid accounts
+    if (p.status !== 'pago' && p.status !== 'cancelado') {
+      const venc = p.vencimento.substring(0, 10);
+      if (filterStatus === 'vencidas') return venc < todayStr;
+      if (filterStatus === 'vence_hoje') return venc === todayStr;
+      if (filterStatus === 'a_vencer') return venc > todayStr;
+    }
+    return false;
+  };
+
+  const matchesReceivableStatus = (r: AccountsReceivable) => {
+    if (filterStatus === 'all') return true;
+    if (filterStatus === 'pago') return r.status === 'pago';
+    
+    if (r.status !== 'pago' && r.status !== 'cancelado') {
+      const venc = r.vencimento.substring(0, 10);
+      if (filterStatus === 'vencidas') return venc < todayStr;
+      if (filterStatus === 'vence_hoje') return venc === todayStr;
+      if (filterStatus === 'a_vencer') return venc > todayStr;
+    }
+    return false;
+  };
+
+  // Filtered Payables
   const getFilteredPayables = () => {
     return payables.filter(p => {
       const matchesCompany = filterCompany === 'all' || p.empresa_id === filterCompany;
-      const matchesStatus = filterStatus === 'all' || p.status === filterStatus;
-      const matchesPeriod = filterByPeriod(p.vencimento);
-      return matchesCompany && matchesStatus && matchesPeriod;
+      const matchesStat = matchesPayableStatus(p);
+      const matchesPer = filterByPeriod(p.status === 'pago' && p.data_pagamento ? p.data_pagamento : p.vencimento);
+      
+      const supName = p.fornecedores?.nome_fantasia || p.fornecedores?.razao_social || '';
+      const matchesSearch = !searchQuery || 
+        p.descricao.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        supName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.categoria.toLowerCase().includes(searchQuery.toLowerCase());
+
+      return matchesCompany && matchesStat && matchesPer && matchesSearch;
     });
   };
 
+  // Filtered Receivables
   const getFilteredReceivables = () => {
     return receivables.filter(r => {
       const matchesCompany = filterCompany === 'all' || r.empresa_id === filterCompany;
-      const matchesStatus = filterStatus === 'all' || r.status === filterStatus;
-      const matchesPeriod = filterByPeriod(r.vencimento);
-      return matchesCompany && matchesStatus && matchesPeriod;
+      const matchesStat = matchesReceivableStatus(r);
+      const matchesPer = filterByPeriod(r.status === 'pago' && r.data_recebimento ? r.data_recebimento : r.vencimento);
+      
+      const clientName = r.cliente_nome || '';
+      const matchesSearch = !searchQuery || 
+        r.descricao.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        r.categoria.toLowerCase().includes(searchQuery.toLowerCase());
+
+      return matchesCompany && matchesStat && matchesPer && matchesSearch;
     });
   };
 
@@ -565,6 +731,7 @@ export default function AdminFinancial() {
       valor: number;
       entidade: string;
       empresa: string;
+      forma_pagamento?: string;
     }[] = [];
 
     // Add paid expenses
@@ -576,9 +743,10 @@ export default function AdminFinancial() {
           tipo: 'despesa',
           descricao: p.descricao,
           categoria: p.categoria,
-          valor: p.valor,
+          valor: p.valor_pago || p.valor,
           entidade: p.fornecedores?.nome_fantasia || p.fornecedores?.razao_social || 'Fornecedor',
-          empresa: p.empresas?.nome_fantasia || 'Loja'
+          empresa: p.empresas?.nome_fantasia || 'Loja',
+          forma_pagamento: p.forma_pagamento
         });
       }
     });
@@ -592,18 +760,23 @@ export default function AdminFinancial() {
           tipo: 'receita',
           descricao: r.descricao,
           categoria: r.categoria,
-          valor: r.valor,
+          valor: r.valor_pago || r.valor,
           entidade: r.cliente_nome || 'Cliente Geral',
-          empresa: r.empresas?.nome_fantasia || 'Loja'
+          empresa: r.empresas?.nome_fantasia || 'Loja',
+          forma_pagamento: r.forma_pagamento
         });
       }
     });
 
-    // Sort chronologically (newest first)
     return items
       .filter(item => {
-        const matchesCompany = filterCompany === 'all' || payables.find(p=>p.id===item.id)?.empresa_id === filterCompany || receivables.find(r=>r.id===item.id)?.empresa_id === filterCompany;
-        return matchesCompany && filterByPeriod(item.data);
+        const matchesCompany = filterCompany === 'all' || 
+          payables.find(p => p.id === item.id)?.empresa_id === filterCompany || 
+          receivables.find(r => r.id === item.id)?.empresa_id === filterCompany;
+        const matchesSearch = !searchQuery ||
+          item.descricao.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.entidade.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesCompany && filterByPeriod(item.data) && matchesSearch;
       })
       .sort((a, b) => b.data.localeCompare(a.data));
   };
@@ -612,13 +785,138 @@ export default function AdminFinancial() {
   const filteredPay = getFilteredPayables();
   const filteredRec = getFilteredReceivables();
 
-  // Summary Card Calculations (based on filters)
+  // Conta Azul Executive KPI Calculations
+  const companyPayables = payables.filter(p => filterCompany === 'all' || p.empresa_id === filterCompany);
+  const companyReceivables = receivables.filter(r => filterCompany === 'all' || r.empresa_id === filterCompany);
+
+  // Status Metrics for Payables (Global or Company)
+  const pendingPayables = companyPayables.filter(p => p.status !== 'pago' && p.status !== 'cancelado');
+  const overduePayables = pendingPayables.filter(p => p.vencimento.substring(0, 10) < todayStr);
+  const dueTodayPayables = pendingPayables.filter(p => p.vencimento.substring(0, 10) === todayStr);
+  const futurePayables = pendingPayables.filter(p => p.vencimento.substring(0, 10) > todayStr && filterByPeriod(p.vencimento));
+  const paidInPeriodPayables = companyPayables.filter(p => p.status === 'pago' && p.data_pagamento && filterByPeriod(p.data_pagamento));
+
+  const totalOverdueVal = overduePayables.reduce((sum, p) => sum + p.valor, 0);
+  const totalDueTodayVal = dueTodayPayables.reduce((sum, p) => sum + p.valor, 0);
+  const totalFutureVal = futurePayables.reduce((sum, p) => sum + p.valor, 0);
+  const totalPaidVal = paidInPeriodPayables.reduce((sum, p) => sum + (p.valor_pago || p.valor), 0);
+  const totalPendingInPeriod = filteredPay.filter(p => p.status !== 'pago' && p.status !== 'cancelado').reduce((sum, p) => sum + p.valor, 0);
+
+  // Status Metrics for Receivables
+  const pendingReceivables = companyReceivables.filter(r => r.status !== 'pago' && r.status !== 'cancelado');
+  const overdueReceivables = pendingReceivables.filter(r => r.vencimento.substring(0, 10) < todayStr);
+  const dueTodayReceivables = pendingReceivables.filter(r => r.vencimento.substring(0, 10) === todayStr);
+  const futureReceivables = pendingReceivables.filter(r => r.vencimento.substring(0, 10) > todayStr && filterByPeriod(r.vencimento));
+  const receivedInPeriod = companyReceivables.filter(r => r.status === 'pago' && r.data_recebimento && filterByPeriod(r.data_recebimento));
+
+  const totalRecOverdueVal = overdueReceivables.reduce((sum, r) => sum + r.valor, 0);
+  const totalRecDueTodayVal = dueTodayReceivables.reduce((sum, r) => sum + r.valor, 0);
+  const totalRecFutureVal = futureReceivables.reduce((sum, r) => sum + r.valor, 0);
+  const totalReceivedVal = receivedInPeriod.reduce((sum, r) => sum + (r.valor_pago || r.valor), 0);
+
+  // Cash Flow Ledger totals
   const totalRevenuesReceived = ledgerItems.filter(i => i.tipo === 'receita').reduce((sum, i) => sum + i.valor, 0);
   const totalExpensesPaid = ledgerItems.filter(i => i.tipo === 'despesa').reduce((sum, i) => sum + i.valor, 0);
   const netLedgerCash = totalRevenuesReceived - totalExpensesPaid;
+  const projectedBalance = netLedgerCash + totalRecFutureVal - totalFutureVal;
 
-  const totalPayablesPending = filteredPay.filter(p => p.status === 'pendente').reduce((sum, p) => sum + p.valor, 0);
-  const totalReceivablesPending = filteredRec.filter(r => r.status === 'pendente').reduce((sum, r) => sum + r.valor, 0);
+  // Print Financial Report
+  const handlePrintFinancialReport = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const periodLabel = 
+      filterPeriod === 'today' ? 'Hoje' :
+      filterPeriod === 'this_week' ? 'Esta Semana' :
+      filterPeriod === 'this_month' ? 'Este Mês' :
+      filterPeriod === 'next_month' ? 'Próximo Mês' :
+      filterPeriod === 'custom' ? `${customStartDate} até ${customEndDate}` : 'Todo o Histórico';
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Relatório Financeiro - Fish House</title>
+          <style>
+            body { font-family: sans-serif; margin: 30px; color: #111; font-size: 12px; }
+            h1 { font-size: 20px; margin-bottom: 4px; color: #cf9e46; }
+            .header-info { display: flex; justify-content: space-between; border-bottom: 2px solid #cf9e46; padding-bottom: 12px; margin-bottom: 20px; }
+            .kpi-row { display: flex; gap: 15px; margin-bottom: 25px; }
+            .kpi-box { flex: 1; border: 1px solid #ddd; padding: 12px; border-radius: 8px; background: #f9f9f9; }
+            .kpi-title { font-size: 10px; text-transform: uppercase; color: #666; font-weight: bold; }
+            .kpi-val { font-size: 16px; font-weight: bold; margin-top: 4px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 11px; }
+            th { background: #f0f0f0; text-align: left; padding: 8px; border-bottom: 1px solid #ccc; text-transform: uppercase; font-size: 9px; }
+            td { padding: 8px; border-bottom: 1px solid #eee; }
+            .text-right { text-align: right; }
+            .danger { color: #dc2626; font-weight: bold; }
+            .success { color: #16a34a; font-weight: bold; }
+          </style>
+        </head>
+        <body onload="window.print(); window.close();">
+          <div class="header-info">
+            <div>
+              <h1>FISH HOUSE - PEIXARIA PREMIUM</h1>
+              <p>Extrato & Posição Financeira • Período: <strong>${periodLabel}</strong></p>
+            </div>
+            <div style="text-align: right;">
+              <p>Emissão: ${new Date().toLocaleString('pt-BR')}</p>
+            </div>
+          </div>
+
+          <div class="kpi-row">
+            <div class="kpi-box">
+              <div class="kpi-title">Vencidas (Em Atraso)</div>
+              <div class="kpi-val danger">R$ ${totalOverdueVal.toFixed(2)} (${overduePayables.length})</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-title">Vencendo Hoje</div>
+              <div class="kpi-val" style="color: #d97706;">R$ ${totalDueTodayVal.toFixed(2)} (${dueTodayPayables.length})</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-title">A Vencer no Período</div>
+              <div class="kpi-val" style="color: #2563eb;">R$ ${totalFutureVal.toFixed(2)}</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-title">Total Pago no Período</div>
+              <div class="kpi-val danger">- R$ ${totalPaidVal.toFixed(2)}</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-title">Total Recebido no Período</div>
+              <div class="kpi-val success">+ R$ ${totalReceivedVal.toFixed(2)}</div>
+            </div>
+          </div>
+
+          <h3>Títulos Filtrados (${activeTab === 'payables' ? 'Contas a Pagar' : activeTab === 'receivables' ? 'Contas a Receber' : 'Fluxo de Caixa'})</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Vencimento / Data</th>
+                <th>Descrição</th>
+                <th>Categoria</th>
+                <th>Fornecedor / Cliente</th>
+                <th>Status</th>
+                <th class="text-right">Valor R$</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(activeTab === 'payables' ? filteredPay : filteredRec).map((i: any) => `
+                <tr>
+                  <td>${new Date(i.vencimento || i.data).toLocaleDateString('pt-BR')}</td>
+                  <td>${i.descricao}</td>
+                  <td>${i.categoria}</td>
+                  <td>${i.fornecedores?.nome_fantasia || i.cliente_nome || '-'}</td>
+                  <td>${i.status}</td>
+                  <td class="text-right">R$ ${Number(i.valor).toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
 
   return (
     <div className="p-4 md:p-8 space-y-8 min-h-screen bg-ink-950 text-white">
@@ -632,27 +930,43 @@ export default function AdminFinancial() {
           <p className="text-gray-400 mt-1">Fluxo de caixa integrado, centro de custos, caixas e contas a pagar/receber.</p>
         </div>
 
-        {/* Tab Buttons */}
-        <div className="flex bg-white/5 p-1 rounded-xl border border-white/5 self-start md:self-center">
-          {[
-            { id: 'ledger', label: 'Fluxo de Caixa', icon: TrendingUp },
-            { id: 'receivables', label: 'A Receber', icon: ArrowUpRight },
-            { id: 'payables', label: 'A Pagar', icon: ArrowDownRight },
-            { id: 'caixas', label: 'Turnos de Caixa', icon: Calculator },
-            { id: 'fiscal', label: 'Painel Fiscal', icon: FileText }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`px-4 py-2 font-bold rounded-lg text-xs md:text-sm transition-all flex items-center gap-2 ${
-                activeTab === tab.id 
-                ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10' 
-                : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <tab.icon className="w-4 h-4" /> {tab.label}
-            </button>
-          ))}
+        {/* Tab Buttons & Print Action */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap bg-white/5 p-1 rounded-2xl border border-white/5">
+            {[
+              { id: 'payables', label: 'A Pagar', icon: ArrowDownRight, badge: overduePayables.length > 0 ? `${overduePayables.length} vencidas` : undefined, badgeColor: 'bg-red-500 text-white' },
+              { id: 'receivables', label: 'A Receber', icon: ArrowUpRight },
+              { id: 'recorrentes', label: 'Despesas Recorrentes', icon: Repeat, badge: 'Fixas', badgeColor: 'bg-gold-500/20 text-gold-400' },
+              { id: 'ledger', label: 'Fluxo de Caixa', icon: TrendingUp },
+              { id: 'caixas', label: 'Turnos de Caixa', icon: Calculator },
+              { id: 'fiscal', label: 'Painel Fiscal', icon: FileText }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`px-3.5 py-2 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center gap-2 ${
+                  activeTab === tab.id 
+                  ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10' 
+                  : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                <tab.icon className="w-4 h-4" /> {tab.label}
+                {tab.badge && (
+                  <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${tab.badgeColor}`}>
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={handlePrintFinancialReport}
+            className="bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 shrink-0"
+            title="Imprimir Extrato / Relatório Financeiro"
+          >
+            <Printer className="w-4 h-4 text-gold-500" /> Imprimir Relatório
+          </button>
         </div>
       </div>
 
@@ -675,17 +989,140 @@ export default function AdminFinancial() {
         )}
       </AnimatePresence>
 
-      {/* Global Filter Bar */}
-      <div className="flex flex-col md:flex-row gap-4 bg-ink-900 border border-white/10 p-4 rounded-3xl shrink-0">
-        <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="space-y-1">
-            <span className="text-[9px] text-gray-500 uppercase font-black tracking-widest ml-1 flex items-center gap-1">
-              Filtrar Empresa
+      {/* ADVANCED CONTA AZUL CONTROLS BAR */}
+      <div className="bg-ink-900 border border-white/10 p-5 rounded-3xl space-y-4 shadow-xl">
+        {/* Row 1: Quick Status Filter Pills */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+          <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest flex items-center gap-1.5">
+            <Filter className="w-3 h-3 text-gold-500" /> Situação dos Títulos:
+          </span>
+
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'all', label: 'Todas', count: activeTab === 'receivables' ? companyReceivables.length : companyPayables.length, color: 'hover:border-white/30' },
+              { 
+                id: 'vencidas', 
+                label: 'Vencidas (Em Atraso)', 
+                count: activeTab === 'receivables' ? overdueReceivables.length : overduePayables.length, 
+                amount: activeTab === 'receivables' ? totalRecOverdueVal : totalOverdueVal,
+                badgeBg: 'bg-red-500/20 text-red-400 border border-red-500/30' 
+              },
+              { 
+                id: 'vence_hoje', 
+                label: 'Vence Hoje', 
+                count: activeTab === 'receivables' ? dueTodayReceivables.length : dueTodayPayables.length,
+                amount: activeTab === 'receivables' ? totalRecDueTodayVal : totalDueTodayVal,
+                badgeBg: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' 
+              },
+              { 
+                id: 'a_vencer', 
+                label: 'A Vencer', 
+                count: activeTab === 'receivables' ? futureReceivables.length : futurePayables.length,
+                badgeBg: 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+              },
+              { 
+                id: 'pago', 
+                label: activeTab === 'receivables' ? 'Recebidas' : 'Pagas', 
+                count: activeTab === 'receivables' ? receivedInPeriod.length : paidInPeriodPayables.length,
+                badgeBg: 'bg-green-500/20 text-green-400 border border-green-500/30' 
+              }
+            ].map(p => {
+              const isSelected = filterStatus === p.id;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setFilterStatus(p.id as any)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+                    isSelected 
+                      ? 'bg-white/15 border-gold-500 text-white shadow-sm' 
+                      : 'bg-ink-950 border-white/5 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <span>{p.label}</span>
+                  <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-md ${p.badgeBg || 'bg-white/10 text-gray-300'}`}>
+                    {p.count}
+                  </span>
+                  {p.amount && p.amount > 0 && isSelected && (
+                    <span className="text-[10px] font-mono font-bold text-gold-400 ml-1">
+                      (R$ {p.amount.toFixed(2)})
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Row 2: Period Filter Pills + Search & Company */}
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+          {/* Period Pills */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest mr-1">
+              Período:
             </span>
+            {[
+              { id: 'today', label: 'Hoje' },
+              { id: 'this_week', label: 'Esta Semana' },
+              { id: 'this_month', label: 'Este Mês' },
+              { id: 'next_month', label: 'Próximo Mês' },
+              { id: 'all', label: 'Tudo' },
+              { id: 'custom', label: 'Personalizado' }
+            ].map(period => (
+              <button
+                key={period.id}
+                onClick={() => setFilterPeriod(period.id as any)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  filterPeriod === period.id 
+                    ? 'bg-gold-500/20 text-gold-400 border border-gold-500/30' 
+                    : 'bg-ink-950 border border-white/5 text-gray-400 hover:text-white'
+                }`}
+              >
+                {period.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Custom Date Inputs if Custom is selected */}
+          {filterPeriod === 'custom' && (
+            <div className="flex items-center gap-2 bg-ink-950 p-1.5 rounded-2xl border border-white/10">
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={e => setCustomStartDate(e.target.value)}
+                className="bg-transparent text-xs font-bold text-white px-2 py-1 focus:outline-none"
+                style={{ colorScheme: 'dark' }}
+              />
+              <span className="text-gray-500 text-xs font-bold">até</span>
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={e => setCustomEndDate(e.target.value)}
+                className="bg-transparent text-xs font-bold text-white px-2 py-1 focus:outline-none"
+                style={{ colorScheme: 'dark' }}
+              />
+            </div>
+          )}
+
+          {/* Search and Company Selector */}
+          <div className="flex items-center gap-3 w-full lg:w-auto">
+            {/* Search Input */}
+            <div className="relative flex-1 sm:w-56">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input
+                type="text"
+                placeholder="Buscar descrição, fornecedor..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-ink-950 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-gray-600 focus:outline-none focus:border-gold-500"
+              />
+            </div>
+
+            {/* Company Select */}
             <select
               value={filterCompany}
               onChange={e => setFilterCompany(e.target.value)}
-              className="w-full bg-ink-950 border border-white/5 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none"
+              className="bg-ink-950 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none cursor-pointer"
+              style={{ colorScheme: 'dark' }}
             >
               <option value="all">Todas as Empresas</option>
               {companies.map(c => (
@@ -693,96 +1130,121 @@ export default function AdminFinancial() {
               ))}
             </select>
           </div>
-
-          <div className="space-y-1">
-            <span className="text-[9px] text-gray-500 uppercase font-black tracking-widest ml-1 flex items-center gap-1">
-              Período de Vencimento/Lançamento
-            </span>
-            <select
-              value={filterPeriod}
-              onChange={e => setFilterPeriod(e.target.value as any)}
-              className="w-full bg-ink-950 border border-white/5 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none"
-            >
-              <option value="today">Hoje</option>
-              <option value="this_month">Este Mês</option>
-              <option value="30d">Últimos 30 dias</option>
-              <option value="all">Todo Histórico</option>
-            </select>
-          </div>
-
-          <div className="space-y-1">
-            <span className="text-[9px] text-gray-500 uppercase font-black tracking-widest ml-1 flex items-center gap-1">
-              Filtrar Status
-            </span>
-            <select
-              value={filterStatus}
-              onChange={e => setFilterStatus(e.target.value as any)}
-              className="w-full bg-ink-950 border border-white/5 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none"
-            >
-              <option value="all">Todos os Status</option>
-              <option value="pendente">Somente Pendentes</option>
-              <option value="pago">Somente Pagos/Recebidos</option>
-            </select>
-          </div>
         </div>
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-pulse">
-          {Array(3).fill(0).map((_, i) => (
-            <div key={i} className="h-32 bg-white/5 rounded-3xl" />
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 animate-pulse">
+          {Array(6).fill(0).map((_, i) => (
+            <div key={i} className="h-28 bg-white/5 rounded-3xl" />
           ))}
         </div>
       ) : (
         <div className="space-y-8">
           
-          {/* STATS WIDGETS */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-ink-900 border border-white/10 rounded-3xl p-6 shadow-xl relative overflow-hidden">
-              <div className="flex justify-between items-center mb-4">
-                <div className="p-2.5 rounded-xl bg-green-500/10 text-green-500">
-                  <TrendingUp className="w-6 h-6" />
-                </div>
-                <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Realizado</span>
+          {/* CONTA AZUL EXECUTIVE KPI CARDS */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {/* Card 1: Total Pendente no Período */}
+            <div className="bg-ink-900 border border-white/10 rounded-3xl p-5 shadow-xl relative overflow-hidden">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[9px] text-gray-500 uppercase font-black tracking-widest">
+                  {activeTab === 'receivables' ? 'A Receber no Período' : 'A Pagar no Período'}
+                </span>
+                <Clock className="w-4 h-4 text-gray-400" />
               </div>
-              <p className="text-gray-400 text-xs">Entradas (Receitas Liquidadas)</p>
-              <p className="text-2xl font-black text-green-500 mt-1">R$ {totalRevenuesReceived.toFixed(2)}</p>
-              {totalReceivablesPending > 0 && (
-                <p className="text-[10px] text-gray-500 font-bold mt-2">
-                  + R$ {totalReceivablesPending.toFixed(2)} pendente a receber
-                </p>
-              )}
-            </div>
-
-            <div className="bg-ink-900 border border-white/10 rounded-3xl p-6 shadow-xl relative overflow-hidden">
-              <div className="flex justify-between items-center mb-4">
-                <div className="p-2.5 rounded-xl bg-red-500/10 text-red-500">
-                  <TrendingDown className="w-6 h-6" />
-                </div>
-                <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Realizado</span>
-              </div>
-              <p className="text-gray-400 text-xs">Saídas (Despesas Pagas)</p>
-              <p className="text-2xl font-black text-red-500 mt-1">R$ {totalExpensesPaid.toFixed(2)}</p>
-              {totalPayablesPending > 0 && (
-                <p className="text-[10px] text-gray-500 font-bold mt-2">
-                  + R$ {totalPayablesPending.toFixed(2)} pendente a pagar
-                </p>
-              )}
-            </div>
-
-            <div className="bg-ink-900 border border-white/10 rounded-3xl p-6 shadow-xl relative overflow-hidden bg-gold-500/5">
-              <div className="flex justify-between items-center mb-4">
-                <div className="p-2.5 rounded-xl bg-gold-500/10 text-gold-500">
-                  <DollarSign className="w-6 h-6" />
-                </div>
-                <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Saldo Líquido</span>
-              </div>
-              <p className="text-gray-400 text-xs">Fluxo Caixa Líquido Realizado</p>
-              <p className={`text-2xl font-black mt-1 ${netLedgerCash >= 0 ? 'text-gold-500' : 'text-red-400'}`}>
-                R$ {netLedgerCash.toFixed(2)}
+              <p className="text-xl font-black text-white font-mono mt-1">
+                R$ {(activeTab === 'receivables' ? totalRecFutureVal + totalRecDueTodayVal : totalPendingInPeriod).toFixed(2)}
               </p>
-              <p className="text-[10px] text-gray-500 font-bold mt-2">
-                Saldo previsto: R$ {(netLedgerCash + totalReceivablesPending - totalPayablesPending).toFixed(2)}
+              <p className="text-[10px] text-gray-400 font-bold mt-1.5">
+                {activeTab === 'receivables' ? pendingReceivables.length : filteredPay.filter(p=>p.status==='pendente').length} título(s) pendente(s)
+              </p>
+            </div>
+
+            {/* Card 2: Vencidas (Alerta Crítico) */}
+            <div className={`border rounded-3xl p-5 shadow-xl relative overflow-hidden transition-all ${
+              (activeTab === 'receivables' ? overdueReceivables.length : overduePayables.length) > 0
+                ? 'bg-red-500/10 border-red-500/30'
+                : 'bg-ink-900 border-white/10'
+            }`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[9px] text-red-400 uppercase font-black tracking-widest">
+                  Vencidas (Em Atraso)
+                </span>
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+              </div>
+              <p className="text-xl font-black text-red-400 font-mono mt-1">
+                R$ {(activeTab === 'receivables' ? totalRecOverdueVal : totalOverdueVal).toFixed(2)}
+              </p>
+              <p className="text-[10px] text-red-300 font-bold mt-1.5">
+                {activeTab === 'receivables' ? overdueReceivables.length : overduePayables.length} título(s) atrasado(s)
+              </p>
+            </div>
+
+            {/* Card 3: Vencendo Hoje */}
+            <div className={`border rounded-3xl p-5 shadow-xl relative overflow-hidden transition-all ${
+              (activeTab === 'receivables' ? dueTodayReceivables.length : dueTodayPayables.length) > 0
+                ? 'bg-yellow-500/10 border-yellow-500/30'
+                : 'bg-ink-900 border-white/10'
+            }`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[9px] text-yellow-400 uppercase font-black tracking-widest">
+                  Vence Hoje
+                </span>
+                <Bell className="w-4 h-4 text-yellow-400" />
+              </div>
+              <p className="text-xl font-black text-yellow-400 font-mono mt-1">
+                R$ {(activeTab === 'receivables' ? totalRecDueTodayVal : totalDueTodayVal).toFixed(2)}
+              </p>
+              <p className="text-[10px] text-yellow-300 font-bold mt-1.5">
+                {activeTab === 'receivables' ? dueTodayReceivables.length : dueTodayPayables.length} título(s) hoje
+              </p>
+            </div>
+
+            {/* Card 4: A Vencer Futuro */}
+            <div className="bg-ink-900 border border-white/10 rounded-3xl p-5 shadow-xl relative overflow-hidden">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[9px] text-blue-400 uppercase font-black tracking-widest">
+                  A Vencer Futuro
+                </span>
+                <CalendarDays className="w-4 h-4 text-blue-400" />
+              </div>
+              <p className="text-xl font-black text-blue-400 font-mono mt-1">
+                R$ {(activeTab === 'receivables' ? totalRecFutureVal : totalFutureVal).toFixed(2)}
+              </p>
+              <p className="text-[10px] text-gray-400 font-bold mt-1.5">
+                {activeTab === 'receivables' ? futureReceivables.length : futurePayables.length} título(s) programado(s)
+              </p>
+            </div>
+
+            {/* Card 5: Realizado no Período */}
+            <div className="bg-ink-900 border border-white/10 rounded-3xl p-5 shadow-xl relative overflow-hidden">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[9px] text-green-400 uppercase font-black tracking-widest">
+                  {activeTab === 'receivables' ? 'Recebido no Período' : 'Pago no Período'}
+                </span>
+                <CheckCircle className="w-4 h-4 text-green-400" />
+              </div>
+              <p className="text-xl font-black text-green-400 font-mono mt-1">
+                R$ {(activeTab === 'receivables' ? totalReceivedVal : totalPaidVal).toFixed(2)}
+              </p>
+              <p className="text-[10px] text-gray-400 font-bold mt-1.5">
+                {activeTab === 'receivables' ? receivedInPeriod.length : paidInPeriodPayables.length} baixado(s)
+              </p>
+            </div>
+
+            {/* Card 6: Saldo Líquido Previsto */}
+            <div className="bg-ink-900 border border-gold-500/20 rounded-3xl p-5 shadow-xl relative overflow-hidden bg-gold-500/5">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[9px] text-gold-400 uppercase font-black tracking-widest">
+                  Saldo Líquido Previsto
+                </span>
+                <DollarSign className="w-4 h-4 text-gold-500" />
+              </div>
+              <p className={`text-xl font-black font-mono mt-1 ${projectedBalance >= 0 ? 'text-gold-400' : 'text-red-400'}`}>
+                R$ {projectedBalance.toFixed(2)}
+              </p>
+              <p className="text-[10px] text-gray-400 font-bold mt-1.5">
+                Fluxo realizado: R$ {netLedgerCash.toFixed(2)}
               </p>
             </div>
           </div>
@@ -855,12 +1317,15 @@ export default function AdminFinancial() {
           {activeTab === 'receivables' && (
             <div className="bg-ink-900 border border-white/10 rounded-3xl p-6 shadow-xl space-y-6">
               <div className="flex justify-between items-center border-b border-white/5 pb-4">
-                <h3 className="text-lg font-display font-bold text-white flex items-center gap-2">
-                  <ArrowUpRight className="text-gold-500 w-5 h-5" /> Contas a Receber
-                </h3>
+                <div>
+                  <h3 className="text-lg font-display font-bold text-white flex items-center gap-2">
+                    <ArrowUpRight className="text-gold-500 w-5 h-5" /> Contas a Receber
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Receitas a prazo, duplicatas de clientes e recebíveis previstos</p>
+                </div>
                 <button
                   onClick={() => setIsReceivableModalOpen(true)}
-                  className="bg-gold-500 hover:bg-gold-600 text-ink-950 font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all flex items-center gap-2"
+                  className="bg-gold-500 hover:bg-gold-600 text-ink-950 font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-gold-500/10"
                 >
                   <Plus className="w-4 h-4 text-ink-950" /> Lançar Receita
                 </button>
@@ -875,7 +1340,7 @@ export default function AdminFinancial() {
                       <th className="py-3.5 px-4">Descrição</th>
                       <th className="py-3.5 px-4">Categoria</th>
                       <th className="py-3.5 px-4">Cliente</th>
-                      <th className="py-3.5 px-4">Status</th>
+                      <th className="py-3.5 px-4">Situação</th>
                       <th className="py-3.5 px-4 text-right">Valor</th>
                       <th className="py-3.5 px-4 text-center">Ações</th>
                     </tr>
@@ -884,47 +1349,90 @@ export default function AdminFinancial() {
                     {filteredRec.length === 0 ? (
                       <tr>
                         <td colSpan={8} className="py-12 text-center text-gray-500 italic">
-                          Nenhuma conta a receber pendente.
+                          Nenhum lançamento a receber encontrado com os filtros selecionados.
                         </td>
                       </tr>
                     ) : (
-                      filteredRec.map(r => (
-                        <tr key={r.id} className="hover:bg-white/5 transition-colors">
-                          <td className="py-3 px-4 font-bold text-gray-500">
-                            {new Date(r.vencimento).toLocaleDateString('pt-BR')}
-                          </td>
-                          <td className="py-3 px-4 font-bold text-white">{r.empresas?.nome_fantasia}</td>
-                          <td className="py-3 px-4 font-bold text-white">{r.descricao}</td>
-                          <td className="py-3 px-4">
-                            <span className="px-2.5 py-1 bg-white/5 border border-white/5 text-gray-400 rounded-full text-[10px] font-bold">
-                              {r.categoria}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 font-medium text-gray-400">{r.cliente_nome || 'Cliente Geral'}</td>
-                          <td className="py-3 px-4">
-                            <span className={`px-2 py-0.5 rounded-full font-black text-[9px] uppercase ${
-                              r.status === 'pago' 
-                              ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
-                              : 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20'
-                            }`}>
-                              {r.status === 'pago' ? 'recebido' : 'pendente'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right font-black text-sm text-green-400">
-                            R$ {r.valor.toFixed(2)}
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            {r.status === 'pendente' && (
-                              <button
-                                onClick={() => handleReceiveAccount(r.id)}
-                                className="bg-green-500 hover:bg-green-600 text-ink-950 font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-xl transition-all"
-                              >
-                                Receber
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))
+                      filteredRec.map(r => {
+                        const isOverdue = r.status !== 'pago' && r.vencimento.substring(0, 10) < todayStr;
+                        const isDueToday = r.status !== 'pago' && r.vencimento.substring(0, 10) === todayStr;
+
+                        return (
+                          <tr key={r.id} className="hover:bg-white/5 transition-colors">
+                            <td className="py-3.5 px-4">
+                              <span className={`font-bold block ${isOverdue ? 'text-red-400' : isDueToday ? 'text-yellow-400' : 'text-gray-300'}`}>
+                                {new Date(r.vencimento).toLocaleDateString('pt-BR')}
+                              </span>
+                              {isOverdue && (
+                                <span className="text-[9px] text-red-400 font-bold uppercase tracking-wider">
+                                  ⚠️ Em atraso
+                                </span>
+                              )}
+                              {isDueToday && (
+                                <span className="text-[9px] text-yellow-400 font-bold uppercase tracking-wider">
+                                  🚨 Vence Hoje!
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 font-bold text-white">{r.empresas?.nome_fantasia || 'Loja'}</td>
+                            <td className="py-3.5 px-4 font-bold text-white">{r.descricao}</td>
+                            <td className="py-3.5 px-4">
+                              <span className="px-2.5 py-1 bg-white/5 border border-white/5 text-gray-400 rounded-full text-[10px] font-bold uppercase">
+                                {r.categoria.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 font-medium text-gray-300">{r.cliente_nome || 'Cliente Geral'}</td>
+                            <td className="py-3.5 px-4">
+                              <span className={`px-2.5 py-1 rounded-full font-black text-[9px] uppercase tracking-wider ${
+                                r.status === 'pago' 
+                                ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                                : isOverdue
+                                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                : isDueToday
+                                ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                                : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                              }`}>
+                                {r.status === 'pago' ? 'Recebido' : isOverdue ? 'Atrasado' : isDueToday ? 'Vence Hoje' : 'A Vencer'}
+                              </span>
+                              {r.status === 'pago' && r.data_recebimento && (
+                                <p className="text-[9px] text-gray-500 mt-0.5">
+                                  Rec: {new Date(r.data_recebimento).toLocaleDateString('pt-BR')}
+                                </p>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 text-right font-black text-sm text-green-400 font-mono">
+                              R$ {(r.valor_pago || r.valor).toFixed(2)}
+                            </td>
+                            <td className="py-3.5 px-4 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                {r.status === 'pendente' ? (
+                                  <button
+                                    onClick={() => setActiveLiquidation({ item: r, type: 'receivable' })}
+                                    className="bg-green-500 hover:bg-green-600 text-ink-950 font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-xl transition-all shadow-md shadow-green-500/10 flex items-center gap-1"
+                                  >
+                                    <CheckCircle2 className="w-3 h-3" /> Receber
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleReopenBill(r.id, 'receivable')}
+                                    className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+                                    title="Estornar recebimento (Reabrir como pendente)"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5 text-yellow-400" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleDeleteBill(r.id, 'receivable')}
+                                  className="p-1.5 text-gray-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition-colors"
+                                  title="Excluir Lançamento"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -936,12 +1444,15 @@ export default function AdminFinancial() {
           {activeTab === 'payables' && (
             <div className="bg-ink-900 border border-white/10 rounded-3xl p-6 shadow-xl space-y-6">
               <div className="flex justify-between items-center border-b border-white/5 pb-4">
-                <h3 className="text-lg font-display font-bold text-white flex items-center gap-2">
-                  <ArrowDownRight className="text-gold-500 w-5 h-5" /> Contas a Pagar
-                </h3>
+                <div>
+                  <h3 className="text-lg font-display font-bold text-white flex items-center gap-2">
+                    <ArrowDownRight className="text-gold-500 w-5 h-5" /> Contas a Pagar
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Despesas operacionais, boletos de fornecedores e contas fixas</p>
+                </div>
                 <button
                   onClick={() => setIsPayableModalOpen(true)}
-                  className="bg-gold-500 hover:bg-gold-600 text-ink-950 font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all flex items-center gap-2"
+                  className="bg-gold-500 hover:bg-gold-600 text-ink-950 font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-gold-500/10"
                 >
                   <Plus className="w-4 h-4 text-ink-950" /> Lançar Despesa
                 </button>
@@ -956,7 +1467,7 @@ export default function AdminFinancial() {
                       <th className="py-3.5 px-4">Descrição</th>
                       <th className="py-3.5 px-4">Categoria</th>
                       <th className="py-3.5 px-4">Fornecedor</th>
-                      <th className="py-3.5 px-4">Status</th>
+                      <th className="py-3.5 px-4">Situação</th>
                       <th className="py-3.5 px-4 text-right">Valor</th>
                       <th className="py-3.5 px-4 text-center">Ações</th>
                     </tr>
@@ -965,54 +1476,112 @@ export default function AdminFinancial() {
                     {filteredPay.length === 0 ? (
                       <tr>
                         <td colSpan={8} className="py-12 text-center text-gray-500 italic">
-                          Nenhuma conta a pagar pendente.
+                          Nenhuma conta a pagar encontrada com os filtros selecionados.
                         </td>
                       </tr>
                     ) : (
-                      filteredPay.map(p => (
-                        <tr key={p.id} className="hover:bg-white/5 transition-colors">
-                          <td className="py-3 px-4 font-bold text-gray-500">
-                            {new Date(p.vencimento).toLocaleDateString('pt-BR')}
-                          </td>
-                          <td className="py-3 px-4 font-bold text-white">{p.empresas?.nome_fantasia}</td>
-                          <td className="py-3 px-4 font-bold text-white">{p.descricao}</td>
-                          <td className="py-3 px-4">
-                            <span className="px-2.5 py-1 bg-white/5 border border-white/5 text-gray-400 rounded-full text-[10px] font-bold">
-                              {p.categoria}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 font-medium text-gray-400">
-                            {p.fornecedores?.nome_fantasia || p.fornecedores?.razao_social || '-'}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className={`px-2 py-0.5 rounded-full font-black text-[9px] uppercase ${
-                              p.status === 'pago' 
-                              ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
-                              : 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20'
-                            }`}>
-                              {p.status}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right font-black text-sm text-red-400">
-                            R$ {p.valor.toFixed(2)}
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            {p.status === 'pendente' && (
-                              <button
-                                onClick={() => handlePayBill(p.id)}
-                                className="bg-red-600 hover:bg-red-500 text-white font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-xl transition-all"
-                              >
-                                Pagar
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))
+                      filteredPay.map(p => {
+                        const isOverdue = p.status !== 'pago' && p.vencimento.substring(0, 10) < todayStr;
+                        const isDueToday = p.status !== 'pago' && p.vencimento.substring(0, 10) === todayStr;
+
+                        return (
+                          <tr key={p.id} className="hover:bg-white/5 transition-colors">
+                            <td className="py-3.5 px-4">
+                              <span className={`font-bold block ${isOverdue ? 'text-red-400 font-black' : isDueToday ? 'text-yellow-400 font-black' : 'text-gray-300'}`}>
+                                {new Date(p.vencimento).toLocaleDateString('pt-BR')}
+                              </span>
+                              {isOverdue && (
+                                <span className="text-[9px] text-red-400 font-bold uppercase tracking-wider">
+                                  ⚠️ Em atraso
+                                </span>
+                              )}
+                              {isDueToday && (
+                                <span className="text-[9px] text-yellow-400 font-bold uppercase tracking-wider">
+                                  🚨 Vence Hoje!
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 font-bold text-white">{p.empresas?.nome_fantasia || 'Loja'}</td>
+                            <td className="py-3.5 px-4">
+                              <p className="font-bold text-white">{p.descricao}</p>
+                              {p.documento_numero && (
+                                <span className="text-[9px] text-gray-500 font-mono">Doc #{p.documento_numero}</span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <span className="px-2.5 py-1 bg-white/5 border border-white/5 text-gray-400 rounded-full text-[10px] font-bold uppercase">
+                                {p.categoria.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 font-medium text-gray-300">
+                              {p.fornecedores?.nome_fantasia || p.fornecedores?.razao_social || '-'}
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <span className={`px-2.5 py-1 rounded-full font-black text-[9px] uppercase tracking-wider ${
+                                p.status === 'pago' 
+                                ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                                : isOverdue
+                                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                : isDueToday
+                                ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                                : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                              }`}>
+                                {p.status === 'pago' ? 'Pago' : isOverdue ? 'Atrasado' : isDueToday ? 'Vence Hoje' : 'A Vencer'}
+                              </span>
+                              {p.status === 'pago' && p.data_pagamento && (
+                                <p className="text-[9px] text-gray-500 mt-0.5">
+                                  Pago em: {new Date(p.data_pagamento).toLocaleDateString('pt-BR')} {p.forma_pagamento ? `(${p.forma_pagamento})` : ''}
+                                </p>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 text-right font-black text-sm text-red-400 font-mono">
+                              R$ {(p.valor_pago || p.valor).toFixed(2)}
+                            </td>
+                            <td className="py-3.5 px-4 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                {p.status === 'pendente' ? (
+                                  <button
+                                    onClick={() => setActiveLiquidation({ item: p, type: 'payable' })}
+                                    className="bg-red-600 hover:bg-red-500 text-white font-black text-[10px] uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-md shadow-red-600/20 flex items-center gap-1"
+                                  >
+                                    <CheckCircle2 className="w-3 h-3" /> Liquidar
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleReopenBill(p.id, 'payable')}
+                                    className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+                                    title="Estornar pagamento (Reabrir como pendente)"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5 text-yellow-400" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleDeleteBill(p.id, 'payable')}
+                                  className="p-1.5 text-gray-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition-colors"
+                                  title="Excluir Lançamento"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
             </div>
+          )}
+
+          {/* TAB 4: RECURRING EXPENSES (CONTA AZUL STYLE) */}
+          {activeTab === 'recorrentes' && (
+            <RecurringExpensesManager
+              companies={companies}
+              suppliers={suppliers}
+              onBillsGenerated={fetchFinancialRecords}
+              showNotification={showNotification}
+            />
           )}
 
           {/* TAB 4: CAIXAS LOGS */}
@@ -1516,6 +2085,25 @@ export default function AdminFinancial() {
         )}
       </AnimatePresence>
 
+      {/* LIQUIDATION / SETTLEMENT MODAL */}
+      {activeLiquidation && (
+        <LiquidationModal
+          isOpen={!!activeLiquidation}
+          onClose={() => setActiveLiquidation(null)}
+          title={activeLiquidation.item.descricao}
+          originalValue={Number(activeLiquidation.item.valor)}
+          dueDate={activeLiquidation.item.vencimento}
+          entityName={
+            activeLiquidation.type === 'payable'
+              ? (activeLiquidation.item as AccountsPayable).fornecedores?.nome_fantasia || (activeLiquidation.item as AccountsPayable).fornecedores?.razao_social
+              : (activeLiquidation.item as AccountsReceivable).cliente_nome
+          }
+          type={activeLiquidation.type}
+          onConfirm={handleConfirmLiquidation}
+        />
+      )}
+
     </div>
   );
 }
+
