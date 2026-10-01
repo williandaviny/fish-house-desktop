@@ -54,7 +54,7 @@ export const localDb = {
     setItem(STORAGE_KEYS.PRODUCTS, products);
   },
 
-  saveProduct(product: any): void {
+  saveProduct(product: any, shouldEnqueue = false): void {
     const list = this.getProducts();
     const idx = list.findIndex(p => p.id === product.id);
     if (idx >= 0) {
@@ -63,12 +63,23 @@ export const localDb = {
       list.push(product);
     }
     this.setProducts(list);
-    this.enqueueSync({
-      id: `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      type: 'product_update',
-      payload: product,
-      created_at: new Date().toISOString()
-    });
+    if (shouldEnqueue) {
+      this.enqueueSync({
+        id: `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        type: 'product_update',
+        payload: product,
+        created_at: new Date().toISOString()
+      });
+    }
+  },
+
+  updateProduct(id: string, updates: Partial<any>): void {
+    const list = this.getProducts();
+    const idx = list.findIndex(p => p.id === id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...updates };
+      this.setProducts(list);
+    }
   },
 
   decrementStock(productId: string, quantity: number): void {
@@ -127,12 +138,20 @@ export const localDb = {
     setItem(STORAGE_KEYS.CAIXA_CURRENT, caixa);
   },
 
+  clearCurrentCaixa(): void {
+    setItem(STORAGE_KEYS.CAIXA_CURRENT, null);
+  },
+
   // --- VENDAS & PEDIDOS ---
   getOrders(): any[] {
     return getItem<any[]>(STORAGE_KEYS.ORDERS, []);
   },
 
-  saveOrderLocally(order: any, items: any[]): any {
+  clearOrders(): void {
+    setItem(STORAGE_KEYS.ORDERS, []);
+  },
+
+  saveOrderLocally(order: any, items: any[], shouldEnqueue = true): any {
     const orders = this.getOrders();
     const orderWithItems = {
       ...order,
@@ -149,13 +168,15 @@ export const localDb = {
       }
     }
 
-    // Adiciona na fila de sincronizacao
-    this.enqueueSync({
-      id: `sale_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      type: 'sale',
-      payload: { order, items },
-      created_at: new Date().toISOString()
-    });
+    // Adiciona na fila de sincronizacao apenas se for venda offline pendente
+    if (shouldEnqueue) {
+      this.enqueueSync({
+        id: `sale_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        type: 'sale',
+        payload: { order, items },
+        created_at: new Date().toISOString()
+      });
+    }
 
     return orderWithItems;
   },

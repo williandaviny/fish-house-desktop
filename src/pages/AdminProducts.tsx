@@ -145,19 +145,29 @@ export default function AdminProducts() {
 
   const fetchProducts = async () => {
     setLoading(true);
-    // 1. Carrega instantaneamente do banco local
+    // 1. Carrega primeiro do banco local para renderização instantânea (0ms lag)
     const local = localDb.getProducts();
     if (local && local.length > 0) {
       const activeProducts = local.filter((p: any) => p.is_deleted !== true);
       setAllProducts(activeProducts);
       setLoading(false);
-    } else {
-      // 2. Se vazio (primeiro boot), sincroniza da nuvem
-      const res = await syncEngine.downloadInitialCatalog();
-      if (res.success) {
-        const fresh = localDb.getProducts();
-        setAllProducts(fresh.filter((p: any) => p.is_deleted !== true));
+    }
+
+    // 2. Busca sempre os dados mais recentes da nuvem (Supabase) tanto no app instalado quanto no navegador
+    try {
+      const { data: freshProds, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('name');
+
+      if (!error && freshProds) {
+        const activeOnly = freshProds.filter((p: any) => p.is_deleted !== true);
+        setAllProducts(activeOnly);
+        localDb.setProducts(activeOnly);
       }
+    } catch (e) {
+      console.warn('[AdminProducts] Falha ao sincronizar com nuvem, mantendo cache:', e);
+    } finally {
       setLoading(false);
     }
   };
@@ -397,19 +407,30 @@ export default function AdminProducts() {
     const amount = replenishValues[id];
     if (!amount || amount <= 0) return;
 
-    const newStock = Number((currentStock + amount).toFixed(2));
-    const { error } = await supabase
-      .from('products')
-      .update({ stock: newStock })
-      .eq('id', id);
+    // Busca o produto no estado mais recente para calcular o novo estoque com segurança
+    const currentProd = allProducts.find(p => p.id === id);
+    const baseStock = currentProd ? Number(currentProd.stock || 0) : Number(currentStock || 0);
+    const newStock = Number((baseStock + amount).toFixed(3));
 
-    if (error) {
-      alert('Erro ao atualizar estoque no produto: ' + error.message);
-      return;
-    }
+    // Atualização otimista imediata na UI e banco local
+    setAllProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p));
+    localDb.updateProduct(id, { stock: newStock });
 
-    // Sincroniza também na tabela saldos_estoque (local loja)
+    setReplenishValues(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
     try {
+      const { error } = await supabase
+        .from('products')
+        .update({ stock: newStock })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Sincroniza também na tabela saldos_estoque (local loja)
       const { data: loja } = await supabase
         .from('locais_estoque')
         .select('id')
@@ -428,16 +449,24 @@ export default function AdminProducts() {
             saldo_reservado: 0
           }, { onConflict: 'produto_id,local_estoque_id' });
       }
-    } catch (sSyncErr) {
-      console.error('Erro ao sincronizar saldo por local:', sSyncErr);
-    }
 
-    setReplenishValues(prev => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    fetchProducts();
+      // Registra movimentação no histórico
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('movimentacoes_estoque').insert({
+        produto_id: id,
+        origem_local_id: null,
+        destino_local_id: loja?.id || null,
+        tipo_movimentacao: 'ajuste_manual',
+        quantidade: amount,
+        motivo: `Reposição rápida de estoque (+${amount})`,
+        usuario_id: user?.id,
+        referencia_tipo: 'reposicao_rapida'
+      });
+    } catch (error: any) {
+      console.error('Erro ao atualizar estoque:', error);
+      alert('Erro ao atualizar estoque: ' + error.message);
+      fetchProducts();
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -470,43 +499,48 @@ export default function AdminProducts() {
           savedProductId = data[0].id;
         }
       }
+
+      // Sincroniza estoque na tabela saldos_estoque (local loja)
+      if (savedProductId && productToSave.stock !== undefined && productToSave.stock !== null) {
+        try {
+          const { data: loja } = await supabase
+            .from('locais_estoque')
+            .select('id')
+            .eq('tipo', 'loja')
+            .eq('ativo', true)
+            .limit(1)
+            .maybeSingle();
+
+          if (loja) {
+            await supabase
+              .from('saldos_estoque')
+              .upsert({
+                produto_id: savedProductId,
+                local_estoque_id: loja.id,
+                saldo_atual: productToSave.stock,
+                saldo_reservado: 0
+              }, { onConflict: 'produto_id,local_estoque_id' });
+          }
+        } catch (sSyncErr) {
+          console.error('Erro ao sincronizar saldo por local no salvamento:', sSyncErr);
+        }
+      }
+
+      // Atualiza cache local instantaneamente (SEM enfileirar na fila de sync pois já salvou no Supabase!)
+      localDb.saveProduct({ ...productToSave, id: savedProductId }, false);
+
     } catch (saveErr: any) {
       console.warn('[AdminProducts] Falha de conexão na nuvem, salvando no banco local:', saveErr);
       if (!savedProductId) {
         savedProductId = crypto.randomUUID();
       }
-      // Adiciona na fila de sincronização
+      // Adiciona na fila de sincronização apenas em caso de falha offline
       localDb.addToSyncQueue({
         table: 'products',
         action: isEditing ? 'update' : 'insert',
         data: { ...productToSave, id: savedProductId }
       });
-    }
-
-    // Sincroniza estoque na tabela saldos_estoque (local loja)
-    if (savedProductId && productToSave.stock !== undefined && productToSave.stock !== null) {
-      try {
-        const { data: loja } = await supabase
-          .from('locais_estoque')
-          .select('id')
-          .eq('tipo', 'loja')
-          .eq('ativo', true)
-          .limit(1)
-          .maybeSingle();
-
-        if (loja) {
-          await supabase
-            .from('saldos_estoque')
-            .upsert({
-              produto_id: savedProductId,
-              local_estoque_id: loja.id,
-              saldo_atual: productToSave.stock,
-              saldo_reservado: 0
-            }, { onConflict: 'produto_id,local_estoque_id' });
-        }
-      } catch (sSyncErr) {
-        console.error('Erro ao sincronizar saldo por local no salvamento:', sSyncErr);
-      }
+      localDb.saveProduct({ ...productToSave, id: savedProductId }, true);
     }
 
     if (savedProductId) {
@@ -521,9 +555,6 @@ export default function AdminProducts() {
       }
     }
 
-    // Atualiza cache local instantaneamente
-    localDb.saveProduct({ ...productToSave, id: savedProductId });
-
     setIsModalOpen(false);
     setComboItems([]);
     fetchProducts();
@@ -531,11 +562,29 @@ export default function AdminProducts() {
   };
 
   const toggleAvailability = async (id: string, current: boolean) => {
-    const { error } = await supabase.from('products').update({ is_available: !current }).eq('id', id);
-    if (error) {
-      alert('Erro ao alterar disponibilidade do produto: ' + error.message);
-    } else {
-      fetchProducts();
+    const newStatus = !current;
+
+    // 1. Atualização otimista imediata na UI (o olho altera instantaneamente!)
+    setAllProducts(prev => prev.map(p => p.id === id ? { ...p, is_available: newStatus } : p));
+    
+    // 2. Atualiza no cache local
+    localDb.updateProduct(id, { is_available: newStatus });
+
+    // 3. Atualiza no Supabase
+    try {
+      const { error } = await supabase.from('products').update({ is_available: newStatus }).eq('id', id);
+      if (error) {
+        console.error('Erro ao alterar disponibilidade no banco:', error);
+        // Reverte em caso de erro
+        setAllProducts(prev => prev.map(p => p.id === id ? { ...p, is_available: current } : p));
+        localDb.updateProduct(id, { is_available: current });
+        alert('Erro ao alterar disponibilidade do produto: ' + error.message);
+      }
+    } catch (err: any) {
+      console.error('Falha de conexão:', err);
+      setAllProducts(prev => prev.map(p => p.id === id ? { ...p, is_available: current } : p));
+      localDb.updateProduct(id, { is_available: current });
+      alert('Falha na comunicação: ' + err.message);
     }
   };
 
@@ -783,12 +832,17 @@ export default function AdminProducts() {
                       </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-1">
-                        <button onClick={() => toggleAvailability(p.id, p.is_available)} className={`p-2 rounded-lg ${p.is_available ? 'text-green-500' : 'text-gray-600'}`}>
+                        <button 
+                          type="button"
+                          onClick={() => toggleAvailability(p.id, p.is_available)} 
+                          className={`p-2.5 rounded-xl active:scale-90 transition-all ${p.is_available ? 'text-green-500 hover:bg-green-500/10' : 'text-gray-500 hover:text-white hover:bg-white/10'}`}
+                          title={p.is_available ? 'Produto ativo no catálogo. Clique para desativar.' : 'Produto pausado. Clique para ativar.'}
+                        >
                           {p.is_available ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                         </button>
-                        <button onClick={() => { setSelectedProduct(p); if (p.is_combo) fetchComboItems(p.id); setIsModalOpen(true); }} className="p-2 text-gray-400"><Edit2 className="w-4 h-4" /></button>
-                        <button onClick={() => handleDuplicate(p)} className="p-2 text-gold-500"><Copy className="w-4 h-4" /></button>
-                        <button onClick={() => handleDelete(p.id)} className="p-2 text-red-500"><Trash2 className="w-4 h-4" /></button>
+                        <button onClick={() => { setSelectedProduct(p); if (p.is_combo) fetchComboItems(p.id); setIsModalOpen(true); }} className="p-2 text-gray-400 hover:text-white"><Edit2 className="w-4 h-4" /></button>
+                        <button onClick={() => handleDuplicate(p)} className="p-2 text-gold-500 hover:scale-105"><Copy className="w-4 h-4" /></button>
+                        <button onClick={() => handleDelete(p.id)} className="p-2 text-red-500 hover:scale-105"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -805,9 +859,15 @@ export default function AdminProducts() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
                       <p className="font-bold text-white truncate">{p.name}</p>
-                      <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg ${p.is_available ? 'bg-green-500/10 text-green-500' : 'bg-gray-500/10 text-gray-500'}`}>
+                      <button 
+                        type="button"
+                        onClick={() => toggleAvailability(p.id, p.is_available)}
+                        className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-xl flex items-center gap-1.5 active:scale-95 transition-all ${p.is_available ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-gray-500/10 text-gray-400 border border-white/5'}`}
+                        title={p.is_available ? 'Clique para desativar' : 'Clique para ativar'}
+                      >
+                        {p.is_available ? <Eye className="w-3.5 h-3.5 text-green-500" /> : <EyeOff className="w-3.5 h-3.5 text-gray-400" />}
                         {p.is_available ? 'Ativo' : 'Pausado'}
-                      </span>
+                      </button>
                     </div>
                     <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">{p.category}</p>
                     <p className="text-gold-500 font-bold mt-1">R$ {p.price.toFixed(2)}</p>
@@ -822,6 +882,14 @@ export default function AdminProducts() {
                     </p>
                   </div>
                   <div className="flex justify-end gap-2">
+                    <button 
+                      type="button"
+                      onClick={() => toggleAvailability(p.id, p.is_available)} 
+                      className={`p-3 rounded-2xl active:scale-95 transition-all ${p.is_available ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-white/5 text-gray-500 border border-white/5'}`}
+                      title={p.is_available ? 'Desativar / Pausar' : 'Ativar produto'}
+                    >
+                      {p.is_available ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                    </button>
                     <button onClick={() => { setSelectedProduct(p); if (p.is_combo) fetchComboItems(p.id); setIsModalOpen(true); }} className="p-3 bg-white/5 rounded-2xl text-gray-400 active:scale-95 transition-all"><Edit2 className="w-4 h-4" /></button>
                     <button onClick={() => handleDuplicate(p)} className="p-3 bg-gold-400/10 rounded-2xl text-gold-500 active:scale-95 transition-all"><Copy className="w-4 h-4" /></button>
                     <button onClick={() => handleDelete(p.id)} className="p-3 bg-red-400/10 rounded-2xl text-red-500 active:scale-95 transition-all"><Trash2 className="w-4 h-4" /></button>

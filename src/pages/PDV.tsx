@@ -603,7 +603,7 @@ export default function PDV() {
 
       setLastSaleId(data);
       
-      // Salva no banco local e abate estoque imediatamente
+      // Salva no banco local e abate estoque imediatamente (false para nao reenfileirar venda online)
       try {
         localDb.saveOrderLocally(
           {
@@ -624,7 +624,8 @@ export default function PDV() {
             quantity: item.quantity,
             price_unit: item.price_unit,
             subtotal: item.subtotal
-          }))
+          })),
+          false
         );
       } catch (e) {
         console.error('[PDV] Erro ao gravar localmente:', e);

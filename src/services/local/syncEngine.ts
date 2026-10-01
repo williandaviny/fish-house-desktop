@@ -105,25 +105,47 @@ class SyncEngine {
         try {
           if (item.type === 'product_update' || item.payload?.name || item.payload?.price !== undefined) {
             const product = item.payload?.data || item.payload;
-            if (product && product.name) {
-              await supabase.from('products').upsert(product);
+            if (product && product.id) {
+              // Se foi apenas atualização de cadastro, não sobrescreve o estoque atual com dados velhos da fila
+              if (item.payload?.is_stock_adjustment) {
+                await supabase.from('products').update({ stock: product.stock }).eq('id', product.id);
+              } else {
+                const { stock, ...productWithoutStock } = product;
+                await supabase.from('products').update(productWithoutStock).eq('id', product.id);
+              }
             }
             syncedIds.push(item.id);
           } else if (item.type === 'sale') {
             const { order, items } = item.payload || {};
-            if (order) {
-              const { data: orderRes, error: orderErr } = await supabase
-                .from('pedidos')
-                .insert([order])
-                .select()
-                .single();
+            if (order && order.id) {
+              // Verifica se a venda já existe no banco para não duplicar
+              const { data: existingVenda } = await supabase
+                .from('vendas')
+                .select('id')
+                .eq('id', order.id)
+                .maybeSingle();
 
-              if (!orderErr && orderRes && items && items.length > 0) {
-                const formattedItems = items.map((it: any) => ({
-                  ...it,
-                  order_id: orderRes.id
+              if (!existingVenda && items && items.length > 0) {
+                const dbItens = items.map((it: any) => ({
+                  produto_id: it.product_id,
+                  quantity: it.quantity,
+                  price_unit: it.price_unit,
+                  subtotal: it.subtotal,
+                  local_saida_id: order.empresa_id || null
                 }));
-                await supabase.from('order_items').insert(formattedItems);
+
+                await supabase.rpc('registrar_venda_pdv', {
+                  p_caixa_id: order.caixa_id,
+                  p_empresa_id: order.empresa_id,
+                  p_cliente_id: order.cliente_id || null,
+                  p_valor_total: order.subtotal || order.total_amount,
+                  p_desconto: order.desconto || 0,
+                  p_acrescimo: order.acrescimo || 0,
+                  p_valor_final: order.total_amount,
+                  p_itens: dbItens,
+                  p_pagamentos: [],
+                  p_observacoes: 'Venda sincronizada da fila offline'
+                });
               }
             }
             syncedIds.push(item.id);
@@ -140,25 +162,15 @@ class SyncEngine {
         localDb.removeFromSyncQueue(syncedIds);
       }
 
-      // 2. Puxar produtos atualizados e pedidos web
-      const lastSync = localDb.getLastSyncTimestamp();
-      let prodQuery = supabase.from('products').select('*');
-      if (lastSync) {
-        prodQuery = prodQuery.gt('updated_at', lastSync);
-      }
-      const { data: updatedProds } = await prodQuery;
+      // 2. Puxar produtos atualizados da nuvem (sem filtro updated_at que quebrava pois a coluna não existe)
+      const { data: freshProds, error: prodErr } = await supabase
+        .from('products')
+        .select('*')
+        .order('name');
 
-      if (updatedProds && updatedProds.length > 0) {
-        const localProds = localDb.getProducts();
-        for (const up of updatedProds) {
-          const idx = localProds.findIndex(p => p.id === up.id);
-          if (idx >= 0) {
-            localProds[idx] = up;
-          } else {
-            localProds.push(up);
-          }
-        }
-        localDb.setProducts(localProds);
+      if (!prodErr && freshProds && freshProds.length > 0) {
+        const activeOnly = freshProds.filter((p: any) => p.is_deleted !== true);
+        localDb.setProducts(activeOnly);
       }
 
       const now = new Date().toISOString();

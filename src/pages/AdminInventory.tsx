@@ -22,6 +22,7 @@ import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { getOptimizedImageUrl } from '../utils/image';
 import { useScale } from '../services/scale/useScale';
+import { localDb } from '../services/local/localDb';
 
 type Product = {
   id: string;
@@ -257,6 +258,7 @@ export default function AdminInventory() {
       if (prodErr) throw prodErr;
       const activeProds = (prods || []).filter((p: any) => p.is_deleted !== true);
       setProducts(activeProds);
+      localDb.setProducts(activeProds);
 
       // Extract unique categories
       if (activeProds) {
@@ -452,7 +454,20 @@ export default function AdminInventory() {
           if (error) throw error;
         }
 
-        // 3. Log movement
+        // 3. Sincroniza diretamente na tabela products e no localDb se envolver local tipo Loja
+        const origLoc = locations.find(l => l.id === transferOrigin);
+        if (origLoc?.tipo === 'loja' || (!locations.some(l => l.tipo === 'loja') && locations[0]?.id === transferOrigin)) {
+          await supabase.from('products').update({ stock: newOrigStock }).eq('id', item.product_id);
+          localDb.updateProduct(item.product_id, { stock: newOrigStock });
+        }
+
+        const destLoc = locations.find(l => l.id === transferDest);
+        if (destLoc?.tipo === 'loja') {
+          await supabase.from('products').update({ stock: newDestStock }).eq('id', item.product_id);
+          localDb.updateProduct(item.product_id, { stock: newDestStock });
+        }
+
+        // 4. Log movement
         const { error: logErr } = await supabase
           .from('movimentacoes_estoque')
           .insert({
@@ -500,7 +515,7 @@ export default function AdminInventory() {
 
       // 1. Get existing balance
       const existing = stockBalances.find(b => b.produto_id === adjustProduct && b.local_estoque_id === adjustLocation);
-      const newStock = (existing ? existing.saldo_atual : 0) + actualChange;
+      const newStock = Math.max(0, Number(((existing ? existing.saldo_atual : 0) + actualChange).toFixed(3)));
 
       if (existing) {
         const { error } = await supabase
@@ -518,6 +533,14 @@ export default function AdminInventory() {
             saldo_reservado: 0
           });
         if (error) throw error;
+      }
+
+      // Sincroniza diretamente na tabela products e no localDb se o local for Loja
+      const loc = locations.find(l => l.id === adjustLocation);
+      const isLoja = loc?.tipo === 'loja' || (!locations.some(l => l.tipo === 'loja') && locations[0]?.id === adjustLocation);
+      if (isLoja) {
+        await supabase.from('products').update({ stock: newStock }).eq('id', adjustProduct);
+        localDb.updateProduct(adjustProduct, { stock: newStock });
       }
 
       // 2. Log movement
