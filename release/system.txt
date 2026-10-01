@@ -1,8 +1,0 @@
-2026-10-01T02:57:48.7100000Z Evaluating release.if
-2026-10-01T02:57:48.7100000Z Evaluating: success()
-2026-10-01T02:57:48.7100000Z Result: true
-2026-10-01T02:57:48.7160000Z Requested labels: windows-latest
-2026-10-01T02:57:48.7160000Z Job defined at: williandaviny/fish-house-desktop/.github/workflows/release.yml@refs/tags/v1.5.1
-2026-10-01T02:57:48.7160000Z Waiting for a runner to pick up this job...
-2026-10-01T02:57:48.9690000Z Job is waiting for a hosted runner to come online.
-2026-10-01T02:57:48.9690000Z Job is about to start running on the hosted runner: GitHub Actions 1000000095
