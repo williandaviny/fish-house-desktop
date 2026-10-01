@@ -1,0 +1,285 @@
+﻿2026-10-01T02:58:09.1972876Z ##[group]Run choco install nsis -y
+2026-10-01T02:58:09.1973260Z [36;1mchoco install nsis -y[0m
+2026-10-01T02:58:09.2262833Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-01T02:58:09.2263337Z env:
+2026-10-01T02:58:09.2263603Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-01T02:58:09.2263976Z   CARGO_INCREMENTAL: 0
+2026-10-01T02:58:09.2264259Z   CARGO_TERM_COLOR: always
+2026-10-01T02:58:09.2264543Z ##[endgroup]
+2026-10-01T02:58:12.5036348Z Chocolatey v2.7.4
+2026-10-01T02:58:12.7824868Z Installing the following packages:
+2026-10-01T02:58:12.7831581Z nsis
+2026-10-01T02:58:12.7836181Z By installing, you accept licenses for the packages.
+2026-10-01T02:58:15.9756956Z Downloading package from source 'https://community.chocolatey.org/api/v2/'
+2026-10-01T02:58:16.1143064Z 
+2026-10-01T02:58:16.1145642Z Progress: Downloading nsis.install 3.13.0... %
+2026-10-01T02:58:16.1147010Z Progress: Downloading nsis.install 3.13.0... %
+2026-10-01T02:58:16.1150710Z Progress: Downloading nsis.install 3.13.0... %
+2026-10-01T02:58:16.1154860Z Progress: Downloading nsis.install 3.13.0... %
+2026-10-01T02:58:16.1156079Z Progress: Downloading nsis.install 3.13.0... %
+2026-10-01T02:58:16.1157397Z Progress: Downloading nsis.install 3.13.0... %
+2026-10-01T02:58:16.1158531Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1159680Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1160828Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1161946Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1163125Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1164071Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1165108Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1166333Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1167438Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1169591Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1172145Z Progress: Downloading nsis.install 3.13.0... 1%
+2026-10-01T02:58:16.1172855Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1173521Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1174478Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1175546Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1176173Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1176789Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1177458Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1178087Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1178723Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1179374Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1180002Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1180616Z Progress: Downloading nsis.install 3.13.0... 2%
+2026-10-01T02:58:16.1181253Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1181899Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1182556Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1183189Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1183869Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1184482Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1185099Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1185695Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1186283Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1186834Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1187464Z Progress: Downloading nsis.install 3.13.0... 3%
+2026-10-01T02:58:16.1188090Z Progress: Downloading nsis.install 3.13.0... 4%
+2026-10-01T02:58:16.1188689Z Progress: Downloading nsis.install 3.13.0... 4%
+2026-10-01T02:58:16.1192761Z Progress: Downloading nsis.install 3.13.0... 4%
+2026-10-01T02:58:16.1193418Z Progress: Downloading nsis.install 3.13.0... 4%
+2026-10-01T02:58:16.1194126Z Progress: Downloading nsis.install 3.13.0... 5%
+2026-10-01T02:58:16.1195246Z Progress: Downloading nsis.install 3.13.0... 5%
+2026-10-01T02:58:16.1195835Z Progress: Downloading nsis.install 3.13.0... 5%
+2026-10-01T02:58:16.1196418Z Progress: Downloading nsis.install 3.13.0... 5%
+2026-10-01T02:58:16.1197008Z Progress: Downloading nsis.install 3.13.0... 6%
+2026-10-01T02:58:16.1197590Z Progress: Downloading nsis.install 3.13.0... 6%
+2026-10-01T02:58:16.1198485Z Progress: Downloading nsis.install 3.13.0... 6%
+2026-10-01T02:58:16.1199085Z Progress: Downloading nsis.install 3.13.0... 7%
+2026-10-01T02:58:16.1199673Z Progress: Downloading nsis.install 3.13.0... 7%
+2026-10-01T02:58:16.1200277Z Progress: Downloading nsis.install 3.13.0... 7%
+2026-10-01T02:58:16.1200849Z Progress: Downloading nsis.install 3.13.0... 7%
+2026-10-01T02:58:16.1201463Z Progress: Downloading nsis.install 3.13.0... 8%
+2026-10-01T02:58:16.1202067Z Progress: Downloading nsis.install 3.13.0... 8%
+2026-10-01T02:58:16.1202651Z Progress: Downloading nsis.install 3.13.0... 8%
+2026-10-01T02:58:16.1203568Z Progress: Downloading nsis.install 3.13.0... 8%
+2026-10-01T02:58:16.1204240Z Progress: Downloading nsis.install 3.13.0... 9%
+2026-10-01T02:58:16.1204860Z Progress: Downloading nsis.install 3.13.0... 9%
+2026-10-01T02:58:16.1205464Z Progress: Downloading nsis.install 3.13.0... 9%
+2026-10-01T02:58:16.1206061Z Progress: Downloading nsis.install 3.13.0... 9%
+2026-10-01T02:58:16.1206715Z Progress: Downloading nsis.install 3.13.0... 10%
+2026-10-01T02:58:16.1207450Z Progress: Downloading nsis.install 3.13.0... 10%
+2026-10-01T02:58:16.1208055Z Progress: Downloading nsis.install 3.13.0... 10%
+2026-10-01T02:58:16.1208636Z Progress: Downloading nsis.install 3.13.0... 10%
+2026-10-01T02:58:16.1209454Z Progress: Downloading nsis.install 3.13.0... 11%
+2026-10-01T02:58:16.1210054Z Progress: Downloading nsis.install 3.13.0... 11%
+2026-10-01T02:58:16.1210632Z Progress: Downloading nsis.install 3.13.0... 11%
+2026-10-01T02:58:16.1211212Z Progress: Downloading nsis.install 3.13.0... 12%
+2026-10-01T02:58:16.1211807Z Progress: Downloading nsis.install 3.13.0... 12%
+2026-10-01T02:58:16.1213224Z Progress: Downloading nsis.install 3.13.0... 12%
+2026-10-01T02:58:16.1213850Z Progress: Downloading nsis.install 3.13.0... 12%
+2026-10-01T02:58:16.1214382Z Progress: Downloading nsis.install 3.13.0... 13%
+2026-10-01T02:58:16.1214958Z Progress: Downloading nsis.install 3.13.0... 13%
+2026-10-01T02:58:16.1215610Z Progress: Downloading nsis.install 3.13.0... 13%
+2026-10-01T02:58:16.1216253Z Progress: Downloading nsis.install 3.13.0... 13%
+2026-10-01T02:58:16.1216889Z Progress: Downloading nsis.install 3.13.0... 14%
+2026-10-01T02:58:16.1217516Z Progress: Downloading nsis.install 3.13.0... 14%
+2026-10-01T02:58:16.1218157Z Progress: Downloading nsis.install 3.13.0... 14%
+2026-10-01T02:58:16.1218805Z Progress: Downloading nsis.install 3.13.0... 15%
+2026-10-01T02:58:16.1219415Z Progress: Downloading nsis.install 3.13.0... 15%
+2026-10-01T02:58:16.1220073Z Progress: Downloading nsis.install 3.13.0... 16%
+2026-10-01T02:58:16.1220667Z Progress: Downloading nsis.install 3.13.0... 16%
+2026-10-01T02:58:16.1221274Z Progress: Downloading nsis.install 3.13.0... 17%
+2026-10-01T02:58:16.1221862Z Progress: Downloading nsis.install 3.13.0... 17%
+2026-10-01T02:58:16.1222474Z Progress: Downloading nsis.install 3.13.0... 18%
+2026-10-01T02:58:16.1223085Z Progress: Downloading nsis.install 3.13.0... 18%
+2026-10-01T02:58:16.1223694Z Progress: Downloading nsis.install 3.13.0... 19%
+2026-10-01T02:58:16.1224279Z Progress: Downloading nsis.install 3.13.0... 19%
+2026-10-01T02:58:16.1224911Z Progress: Downloading nsis.install 3.13.0... 20%
+2026-10-01T02:58:16.1225547Z Progress: Downloading nsis.install 3.13.0... 20%
+2026-10-01T02:58:16.1226162Z Progress: Downloading nsis.install 3.13.0... 21%
+2026-10-01T02:58:16.1232574Z Progress: Downloading nsis.install 3.13.0... 21%
+2026-10-01T02:58:16.1233287Z Progress: Downloading nsis.install 3.13.0... 22%
+2026-10-01T02:58:16.1233890Z Progress: Downloading nsis.install 3.13.0... 23%
+2026-10-01T02:58:16.1234698Z Progress: Downloading nsis.install 3.13.0... 23%
+2026-10-01T02:58:16.1235318Z Progress: Downloading nsis.install 3.13.0... 24%
+2026-10-01T02:58:16.1235909Z Progress: Downloading nsis.install 3.13.0... 24%
+2026-10-01T02:58:16.1236482Z Progress: Downloading nsis.install 3.13.0... 25%
+2026-10-01T02:58:16.1237067Z Progress: Downloading nsis.install 3.13.0... 25%
+2026-10-01T02:58:16.1237958Z Progress: Downloading nsis.install 3.13.0... 26%
+2026-10-01T02:58:16.1238536Z Progress: Downloading nsis.install 3.13.0... 26%
+2026-10-01T02:58:16.1239102Z Progress: Downloading nsis.install 3.13.0... 27%
+2026-10-01T02:58:16.1239680Z Progress: Downloading nsis.install 3.13.0... 27%
+2026-10-01T02:58:16.1240254Z Progress: Downloading nsis.install 3.13.0... 28%
+2026-10-01T02:58:16.1240859Z Progress: Downloading nsis.install 3.13.0... 28%
+2026-10-01T02:58:16.1241463Z Progress: Downloading nsis.install 3.13.0... 29%
+2026-10-01T02:58:16.1242069Z Progress: Downloading nsis.install 3.13.0... 29%
+2026-10-01T02:58:16.1242668Z Progress: Downloading nsis.install 3.13.0... 30%
+2026-10-01T02:58:16.1243261Z Progress: Downloading nsis.install 3.13.0... 30%
+2026-10-01T02:58:16.1243859Z Progress: Downloading nsis.install 3.13.0... 31%
+2026-10-01T02:58:16.1244456Z Progress: Downloading nsis.install 3.13.0... 31%
+2026-10-01T02:58:16.1245044Z Progress: Downloading nsis.install 3.13.0... 32%
+2026-10-01T02:58:16.1245669Z Progress: Downloading nsis.install 3.13.0... 33%
+2026-10-01T02:58:16.1246244Z Progress: Downloading nsis.install 3.13.0... 33%
+2026-10-01T02:58:16.1246850Z Progress: Downloading nsis.install 3.13.0... 34%
+2026-10-01T02:58:16.1248080Z Progress: Downloading nsis.install 3.13.0... 34%
+2026-10-01T02:58:16.1248715Z Progress: Downloading nsis.install 3.13.0... 35%
+2026-10-01T02:58:16.1249329Z Progress: Downloading nsis.install 3.13.0... 35%
+2026-10-01T02:58:16.1251391Z Progress: Downloading nsis.install 3.13.0... 36%
+2026-10-01T02:58:16.1254550Z Progress: Downloading nsis.install 3.13.0... 36%
+2026-10-01T02:58:16.1257902Z Progress: Downloading nsis.install 3.13.0... 37%
+2026-10-01T02:58:16.1259914Z Progress: Downloading nsis.install 3.13.0... 37%
+2026-10-01T02:58:16.1262257Z Progress: Downloading nsis.install 3.13.0... 38%
+2026-10-01T02:58:16.1264438Z Progress: Downloading nsis.install 3.13.0... 38%
+2026-10-01T02:58:16.1265408Z Progress: Downloading nsis.install 3.13.0... 39%
+2026-10-01T02:58:16.1266015Z Progress: Downloading nsis.install 3.13.0... 39%
+2026-10-01T02:58:16.1266601Z Progress: Downloading nsis.install 3.13.0... 40%
+2026-10-01T02:58:16.1267187Z Progress: Downloading nsis.install 3.13.0... 40%
+2026-10-01T02:58:16.1267763Z Progress: Downloading nsis.install 3.13.0... 41%
+2026-10-01T02:58:16.1268323Z Progress: Downloading nsis.install 3.13.0... 42%
+2026-10-01T02:58:16.1268918Z Progress: Downloading nsis.install 3.13.0... 42%
+2026-10-01T02:58:16.1269545Z Progress: Downloading nsis.install 3.13.0... 43%
+2026-10-01T02:58:16.1270129Z Progress: Downloading nsis.install 3.13.0... 43%
+2026-10-01T02:58:16.1270717Z Progress: Downloading nsis.install 3.13.0... 44%
+2026-10-01T02:58:16.1271284Z Progress: Downloading nsis.install 3.13.0... 44%
+2026-10-01T02:58:16.1271859Z Progress: Downloading nsis.install 3.13.0... 45%
+2026-10-01T02:58:16.1272455Z Progress: Downloading nsis.install 3.13.0... 45%
+2026-10-01T02:58:16.1273364Z Progress: Downloading nsis.install 3.13.0... 46%
+2026-10-01T02:58:16.1273943Z Progress: Downloading nsis.install 3.13.0... 46%
+2026-10-01T02:58:16.1276405Z Progress: Downloading nsis.install 3.13.0... 47%
+2026-10-01T02:58:16.1277340Z Progress: Downloading nsis.install 3.13.0... 47%
+2026-10-01T02:58:16.1277934Z Progress: Downloading nsis.install 3.13.0... 48%
+2026-10-01T02:58:16.1278665Z Progress: Downloading nsis.install 3.13.0... 48%
+2026-10-01T02:58:16.1279503Z Progress: Downloading nsis.install 3.13.0... 49%
+2026-10-01T02:58:16.1280087Z Progress: Downloading nsis.install 3.13.0... 49%
+2026-10-01T02:58:16.1280643Z Progress: Downloading nsis.install 3.13.0... 50%
+2026-10-01T02:58:16.1281212Z Progress: Downloading nsis.install 3.13.0... 50%
+2026-10-01T02:58:16.1281776Z Progress: Downloading nsis.install 3.13.0... 51%
+2026-10-01T02:58:16.1282335Z Progress: Downloading nsis.install 3.13.0... 52%
+2026-10-01T02:58:16.1282900Z Progress: Downloading nsis.install 3.13.0... 52%
+2026-10-01T02:58:16.1283474Z Progress: Downloading nsis.install 3.13.0... 53%
+2026-10-01T02:58:16.1285324Z Progress: Downloading nsis.install 3.13.0... 53%
+2026-10-01T02:58:16.1285950Z Progress: Downloading nsis.install 3.13.0... 53%
+2026-10-01T02:58:16.1286548Z Progress: Downloading nsis.install 3.13.0... 54%
+2026-10-01T02:58:16.1287148Z Progress: Downloading nsis.install 3.13.0... 54%
+2026-10-01T02:58:16.1287758Z Progress: Downloading nsis.install 3.13.0... 55%
+2026-10-01T02:58:16.1288354Z Progress: Downloading nsis.install 3.13.0... 55%
+2026-10-01T02:58:16.1288929Z Progress: Downloading nsis.install 3.13.0... 56%
+2026-10-01T02:58:16.1289502Z Progress: Downloading nsis.install 3.13.0... 56%
+2026-10-01T02:58:16.1290098Z Progress: Downloading nsis.install 3.13.0... 57%
+2026-10-01T02:58:16.1290757Z Progress: Downloading nsis.install 3.13.0... 57%
+2026-10-01T02:58:16.1291329Z Progress: Downloading nsis.install 3.13.0... 58%
+2026-10-01T02:58:16.1291902Z Progress: Downloading nsis.install 3.13.0... 59%
+2026-10-01T02:58:16.1292484Z Progress: Downloading nsis.install 3.13.0... 59%
+2026-10-01T02:58:16.1293371Z Progress: Downloading nsis.install 3.13.0... 60%
+2026-10-01T02:58:16.1293904Z Progress: Downloading nsis.install 3.13.0... 60%
+2026-10-01T02:58:16.1294489Z Progress: Downloading nsis.install 3.13.0... 61%
+2026-10-01T02:58:16.1295061Z Progress: Downloading nsis.install 3.13.0... 61%
+2026-10-01T02:58:16.1295620Z Progress: Downloading nsis.install 3.13.0... 62%
+2026-10-01T02:58:16.1296207Z Progress: Downloading nsis.install 3.13.0... 62%
+2026-10-01T02:58:16.1296770Z Progress: Downloading nsis.install 3.13.0... 63%
+2026-10-01T02:58:16.1297352Z Progress: Downloading nsis.install 3.13.0... 63%
+2026-10-01T02:58:16.1297903Z Progress: Downloading nsis.install 3.13.0... 64%
+2026-10-01T02:58:16.1298465Z Progress: Downloading nsis.install 3.13.0... 64%
+2026-10-01T02:58:16.1299038Z Progress: Downloading nsis.install 3.13.0... 65%
+2026-10-01T02:58:16.1299605Z Progress: Downloading nsis.install 3.13.0... 65%
+2026-10-01T02:58:16.1300188Z Progress: Downloading nsis.install 3.13.0... 66%
+2026-10-01T02:58:16.1300765Z Progress: Downloading nsis.install 3.13.0... 66%
+2026-10-01T02:58:16.1301352Z Progress: Downloading nsis.install 3.13.0... 67%
+2026-10-01T02:58:16.1301933Z Progress: Downloading nsis.install 3.13.0... 67%
+2026-10-01T02:58:16.1302506Z Progress: Downloading nsis.install 3.13.0... 68%
+2026-10-01T02:58:16.1303076Z Progress: Downloading nsis.install 3.13.0... 69%
+2026-10-01T02:58:16.1303694Z Progress: Downloading nsis.install 3.13.0... 69%
+2026-10-01T02:58:16.1304280Z Progress: Downloading nsis.install 3.13.0... 70%
+2026-10-01T02:58:16.1304868Z Progress: Downloading nsis.install 3.13.0... 70%
+2026-10-01T02:58:16.1305451Z Progress: Downloading nsis.install 3.13.0... 71%
+2026-10-01T02:58:16.1306022Z Progress: Downloading nsis.install 3.13.0... 71%
+2026-10-01T02:58:16.1306600Z Progress: Downloading nsis.install 3.13.0... 72%
+2026-10-01T02:58:16.1307181Z Progress: Downloading nsis.install 3.13.0... 72%
+2026-10-01T02:58:16.1307790Z Progress: Downloading nsis.install 3.13.0... 73%
+2026-10-01T02:58:16.1308392Z Progress: Downloading nsis.install 3.13.0... 73%
+2026-10-01T02:58:16.1308976Z Progress: Downloading nsis.install 3.13.0... 74%
+2026-10-01T02:58:16.1309548Z Progress: Downloading nsis.install 3.13.0... 74%
+2026-10-01T02:58:16.1310114Z Progress: Downloading nsis.install 3.13.0... 75%
+2026-10-01T02:58:16.1310693Z Progress: Downloading nsis.install 3.13.0... 75%
+2026-10-01T02:58:16.1311482Z Progress: Downloading nsis.install 3.13.0... 76%
+2026-10-01T02:58:16.1312053Z Progress: Downloading nsis.install 3.13.0... 76%
+2026-10-01T02:58:16.1312633Z Progress: Downloading nsis.install 3.13.0... 77%
+2026-10-01T02:58:16.1313507Z Progress: Downloading nsis.install 3.13.0... 78%
+2026-10-01T02:58:16.1314113Z Progress: Downloading nsis.install 3.13.0... 78%
+2026-10-01T02:58:16.1314673Z Progress: Downloading nsis.install 3.13.0... 79%
+2026-10-01T02:58:16.1315249Z Progress: Downloading nsis.install 3.13.0... 79%
+2026-10-01T02:58:16.1316018Z Progress: Downloading nsis.install 3.13.0... 80%
+2026-10-01T02:58:16.1316607Z Progress: Downloading nsis.install 3.13.0... 80%
+2026-10-01T02:58:16.1317199Z Progress: Downloading nsis.install 3.13.0... 81%
+2026-10-01T02:58:16.1317767Z Progress: Downloading nsis.install 3.13.0... 81%
+2026-10-01T02:58:16.1318348Z Progress: Downloading nsis.install 3.13.0... 82%
+2026-10-01T02:58:16.1318921Z Progress: Downloading nsis.install 3.13.0... 82%
+2026-10-01T02:58:16.1319507Z Progress: Downloading nsis.install 3.13.0... 83%
+2026-10-01T02:58:16.1320079Z Progress: Downloading nsis.install 3.13.0... 83%
+2026-10-01T02:58:16.1320665Z Progress: Downloading nsis.install 3.13.0... 84%
+2026-10-01T02:58:16.1321221Z Progress: Downloading nsis.install 3.13.0... 84%
+2026-10-01T02:58:16.1321771Z Progress: Downloading nsis.install 3.13.0... 85%
+2026-10-01T02:58:16.1322322Z Progress: Downloading nsis.install 3.13.0... 85%
+2026-10-01T02:58:16.1322890Z Progress: Downloading nsis.install 3.13.0... 86%
+2026-10-01T02:58:16.1323461Z Progress: Downloading nsis.install 3.13.0... 86%
+2026-10-01T02:58:16.1323971Z Progress: Downloading nsis.install 3.13.0... 87%
+2026-10-01T02:58:16.1324322Z Progress: Downloading nsis.install 3.13.0... 88%
+2026-10-01T02:58:16.1324669Z Progress: Downloading nsis.install 3.13.0... 88%
+2026-10-01T02:58:16.1325001Z Progress: Downloading nsis.install 3.13.0... 89%
+2026-10-01T02:58:16.1325328Z Progress: Downloading nsis.install 3.13.0... 89%
+2026-10-01T02:58:16.1325664Z Progress: Downloading nsis.install 3.13.0... 90%
+2026-10-01T02:58:16.1325989Z Progress: Downloading nsis.install 3.13.0... 90%
+2026-10-01T02:58:16.1326316Z Progress: Downloading nsis.install 3.13.0... 91%
+2026-10-01T02:58:16.1326640Z Progress: Downloading nsis.install 3.13.0... 91%
+2026-10-01T02:58:16.1326976Z Progress: Downloading nsis.install 3.13.0... 91%
+2026-10-01T02:58:16.1327308Z Progress: Downloading nsis.install 3.13.0... 92%
+2026-10-01T02:58:16.1327637Z Progress: Downloading nsis.install 3.13.0... 92%
+2026-10-01T02:58:16.1327969Z Progress: Downloading nsis.install 3.13.0... 93%
+2026-10-01T02:58:16.1328295Z Progress: Downloading nsis.install 3.13.0... 94%
+2026-10-01T02:58:16.1328624Z Progress: Downloading nsis.install 3.13.0... 94%
+2026-10-01T02:58:16.1328957Z Progress: Downloading nsis.install 3.13.0... 95%
+2026-10-01T02:58:16.1329287Z Progress: Downloading nsis.install 3.13.0... 95%
+2026-10-01T02:58:16.1329616Z Progress: Downloading nsis.install 3.13.0... 96%
+2026-10-01T02:58:16.1329950Z Progress: Downloading nsis.install 3.13.0... 96%
+2026-10-01T02:58:16.1330279Z Progress: Downloading nsis.install 3.13.0... 97%
+2026-10-01T02:58:16.1330621Z Progress: Downloading nsis.install 3.13.0... 97%
+2026-10-01T02:58:16.1330953Z Progress: Downloading nsis.install 3.13.0... 98%
+2026-10-01T02:58:16.1331281Z Progress: Downloading nsis.install 3.13.0... 98%
+2026-10-01T02:58:16.1331606Z Progress: Downloading nsis.install 3.13.0... 99%
+2026-10-01T02:58:16.1331930Z Progress: Downloading nsis.install 3.13.0... 99%
+2026-10-01T02:58:16.1332267Z Progress: Downloading nsis.install 3.13.0... 100%
+2026-10-01T02:58:16.1332605Z Progress: Downloading nsis.install 3.13.0... 100%
+2026-10-01T02:58:16.4085075Z 
+2026-10-01T02:58:16.4085837Z nsis.install v3.13.0 [Approved]
+2026-10-01T02:58:16.4336102Z nsis.install package files install completed. Performing other installation steps.
+2026-10-01T02:58:19.0856825Z Installing nsis.install...
+2026-10-01T02:58:20.4336515Z nsis.install has been installed.
+2026-10-01T02:58:20.5809927Z   nsis.install can be automatically uninstalled.
+2026-10-01T02:58:20.6952947Z  The install of nsis.install was successful.
+2026-10-01T02:58:20.6955856Z   Deployed to 'C:\Program Files (x86)\NSIS'
+2026-10-01T02:58:20.7105972Z Downloading package from source 'https://community.chocolatey.org/api/v2/'
+2026-10-01T02:58:20.7619206Z 
+2026-10-01T02:58:20.7619894Z Progress: Downloading nsis 3.13.0... 100%
+2026-10-01T02:58:20.7995208Z 
+2026-10-01T02:58:20.7995701Z nsis v3.13.0 [Approved]
+2026-10-01T02:58:20.8011569Z nsis package files install completed. Performing other installation steps.
+2026-10-01T02:58:21.0013128Z  The install of nsis was successful.
+2026-10-01T02:58:21.0016277Z   Deployed to 'C:\ProgramData\chocolatey\lib\nsis'
+2026-10-01T02:58:21.0172944Z 
+2026-10-01T02:58:21.0173420Z Chocolatey installed 2/2 packages. 
+2026-10-01T02:58:21.0174050Z  See the log for details (C:\ProgramData\chocolatey\logs\chocolatey.log).
+2026-10-01T02:58:21.0183591Z 
+2026-10-01T02:58:21.0184152Z Did you know the proceeds of Pro (and some proceeds from other
+2026-10-01T02:58:21.0185007Z  licensed editions) go into bettering the community infrastructure?
+2026-10-01T02:58:21.0185801Z  Your support ensures an active community, keeps Chocolatey tip-top,
+2026-10-01T02:58:21.0186464Z  plus it nets you some awesome features!
+2026-10-01T02:58:21.0187296Z  https://chocolatey.org/compare

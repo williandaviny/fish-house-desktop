@@ -25,13 +25,13 @@
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.13.1",
     "vite": "^6.2.0",
-    "@tauri-apps/api": "^2.2.0"
+    "@tauri-apps/api": "~2.11.1"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",
     "@tailwindcss/oxide-linux-x64-gnu": "^4.1.14",
     "@tailwindcss/oxide-linux-x64-musl": "^4.1.14",
-    "@tauri-apps/cli": "^2.11.4",
+    "@tauri-apps/cli": "~2.11.4",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
