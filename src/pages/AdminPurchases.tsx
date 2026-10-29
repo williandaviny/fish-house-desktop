@@ -16,7 +16,8 @@ import {
   Warehouse,
   UserPlus,
   Upload,
-  Barcode
+  Barcode,
+  Pencil
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { localDb } from '../services/local/localDb';
@@ -234,6 +235,7 @@ export default function AdminPurchases() {
   // Suppliers Form/List
   const [supplierSearch, setSupplierSearch] = useState('');
   const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
   const [newSupplier, setNewSupplier] = useState({
     cnpj_cpf: '',
     razao_social: '',
@@ -243,6 +245,7 @@ export default function AdminPurchases() {
     endereco: ''
   });
   const [isSavingSupplier, setIsSavingSupplier] = useState(false);
+  const [isDeletingSupplierId, setIsDeletingSupplierId] = useState<string | null>(null);
 
   // Purchase History State
   const [purchases, setPurchases] = useState<any[]>([]);
@@ -457,7 +460,7 @@ export default function AdminPurchases() {
   const handleImportByAccessKey = async (keyParam?: string) => {
     const key = (keyParam || accessKeyInput).replace(/\D/g, '').trim();
     if (key.length !== 44) {
-      showNotification('error', 'A chave de acesso deve possuir exatamente 44 dígitos numéricos.');
+      showNotification('error', `⚠️ Chave incompleta: você informou ${key.length} dígitos. A chave de acesso na DANFE possui exatamente 44 dígitos (faltam ${44 - key.length} dígitos). Digite ou bipe os 44 dígitos completos.`);
       return;
     }
 
@@ -504,23 +507,26 @@ export default function AdminPurchases() {
         }
 
         setMappedProducts(initialMap);
-        showNotification('success', `⚡ NF-e #${parsed.numero} baixada da SEFAZ via Certificado Digital!`);
+        setAccessKeyInput('');
+        showNotification('success', `⚡ NF-e #${parsed.numero} baixada da SEFAZ com todos os produtos!`);
         return;
       }
 
-      // 2. Se a SEFAZ não liberou o XML ou o certificado não estiver ativo:
-      showNotification('success', 'Buscando dados do fornecedor na Receita Federal...');
+      // 2. Se a SEFAZ não liberou o XML (ex: não manifestada, web sem desktop, etc):
+      if (sefazRes.error) {
+        showNotification('error', sefazRes.error);
+      }
+
       const cnpj = key.substring(6, 20);
       const rawNumber = key.substring(25, 34);
       const nNf = parseInt(rawNumber, 10).toString();
 
-      // 1. Busca os dados reais do fornecedor pelo CNPJ
+      // Busca os dados reais do fornecedor pelo CNPJ na Receita Federal
       let supplierInfo = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cnpj);
       
       if (!supplierInfo) {
         const apiData = await fetchCnpjData(cnpj);
         if (apiData) {
-          // Cadastra automaticamente o fornecedor real no banco
           const { data: newSup, error: supErr } = await supabase
             .from('fornecedores')
             .insert([{
@@ -541,19 +547,18 @@ export default function AdminPurchases() {
         }
       }
 
-      // Preenche a ficha da compra manual com os dados reais
+      // Preenche a ficha da compra manual com os dados do fornecedor
       setSelectedSupplier(supplierInfo?.id || '');
       setDocNumber(nNf);
       setActiveTab('new_purchase');
 
       const supName = supplierInfo?.nome_fantasia || supplierInfo?.razao_social || `CNPJ ${cnpj}`;
-      showNotification('success', `✅ Nota Fiscal nº ${nNf} identificada! Fornecedor: ${supName}. Agora bipe os produtos da nota ou importe o arquivo .xml.`);
+      showNotification('success', `✅ Dados da Nota nº ${nNf} identificados! Fornecedor: ${supName}.`);
     } catch (err: any) {
       console.error(err);
-      showNotification('error', 'Falha ao identificar chave da nota: ' + err.message);
+      showNotification('error', 'Falha ao processar chave da nota: ' + err.message);
     } finally {
       setIsFetchingKey(false);
-      setAccessKeyInput('');
     }
   };
 
@@ -1179,26 +1184,113 @@ export default function AdminPurchases() {
     }
   };
 
-  // Save Supplier
-  const handleSaveSupplier = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSupplier.cnpj_cpf || !newSupplier.razao_social) return;
+  // Suppliers CRUD
+  const handleOpenCreateSupplier = () => {
+    setEditingSupplierId(null);
+    setNewSupplier({
+      cnpj_cpf: '',
+      razao_social: '',
+      nome_fantasia: '',
+      telefone: '',
+      email: '',
+      endereco: ''
+    });
+    setIsSupplierModalOpen(true);
+  };
 
-    setIsSavingSupplier(true);
+  const handleOpenEditSupplier = (sup: Supplier) => {
+    setEditingSupplierId(sup.id);
+    setNewSupplier({
+      cnpj_cpf: sup.cnpj_cpf || '',
+      razao_social: sup.razao_social || '',
+      nome_fantasia: sup.nome_fantasia || '',
+      telefone: sup.telefone || '',
+      email: sup.email || '',
+      endereco: sup.endereco || ''
+    });
+    setIsSupplierModalOpen(true);
+  };
+
+  const handleDeleteSupplier = async (sup: Supplier) => {
+    const supName = sup.nome_fantasia || sup.razao_social;
+    if (!window.confirm(`Tem certeza que deseja excluir o fornecedor "${supName}"? Esta ação removerá o registro do cadastro.`)) {
+      return;
+    }
+
+    setIsDeletingSupplierId(sup.id);
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('fornecedores')
-        .insert([newSupplier])
-        .select()
-        .single();
+        .delete()
+        .eq('id', sup.id);
 
       if (error) throw error;
 
-      setSuppliers(prev => [...prev, data].sort((a,b)=> a.razao_social.localeCompare(b.razao_social)));
-      setSelectedSupplier(data.id);
+      setSuppliers(prev => prev.filter(s => s.id !== sup.id));
+      if (selectedSupplier === sup.id) {
+        setSelectedSupplier('');
+      }
+      showNotification('success', `Fornecedor "${supName}" excluído com sucesso!`);
+    } catch (err: any) {
+      console.error(err);
+      showNotification('error', 'Erro ao excluir fornecedor: ' + err.message);
+    } finally {
+      setIsDeletingSupplierId(null);
+    }
+  };
+
+  // Save Supplier (Create or Update)
+  const handleSaveSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSupplier.cnpj_cpf.trim() || !newSupplier.razao_social.trim()) {
+      showNotification('error', 'Informe o CNPJ/CPF e a Razão Social.');
+      return;
+    }
+
+    setIsSavingSupplier(true);
+    try {
+      if (editingSupplierId) {
+        const { data, error } = await supabase
+          .from('fornecedores')
+          .update({
+            cnpj_cpf: newSupplier.cnpj_cpf.trim(),
+            razao_social: newSupplier.razao_social.trim(),
+            nome_fantasia: newSupplier.nome_fantasia.trim() || null,
+            telefone: newSupplier.telefone.trim() || null,
+            email: newSupplier.email.trim() || null,
+            endereco: newSupplier.endereco.trim() || null
+          })
+          .eq('id', editingSupplierId)
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        setSuppliers(prev => prev.map(s => s.id === data.id ? { ...s, ...data } : s).sort((a,b)=> a.razao_social.localeCompare(b.razao_social)));
+        showNotification('success', 'Fornecedor atualizado com sucesso!');
+      } else {
+        const { data, error } = await supabase
+          .from('fornecedores')
+          .insert([{
+            cnpj_cpf: newSupplier.cnpj_cpf.trim(),
+            razao_social: newSupplier.razao_social.trim(),
+            nome_fantasia: newSupplier.nome_fantasia.trim() || null,
+            telefone: newSupplier.telefone.trim() || null,
+            email: newSupplier.email.trim() || null,
+            endereco: newSupplier.endereco.trim() || null
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        setSuppliers(prev => [...prev, data].sort((a,b)=> a.razao_social.localeCompare(b.razao_social)));
+        setSelectedSupplier(data.id);
+        showNotification('success', 'Fornecedor cadastrado com sucesso!');
+      }
+
       setIsSupplierModalOpen(false);
-      
-      // Reset state
+      setEditingSupplierId(null);
       setNewSupplier({
         cnpj_cpf: '',
         razao_social: '',
@@ -1207,11 +1299,9 @@ export default function AdminPurchases() {
         email: '',
         endereco: ''
       });
-
-      showNotification('success', 'Fornecedor cadastrado com sucesso!');
     } catch (err: any) {
       console.error(err);
-      showNotification('error', 'Erro ao cadastrar fornecedor: ' + err.message);
+      showNotification('error', 'Erro ao salvar fornecedor: ' + err.message);
     } finally {
       setIsSavingSupplier(false);
     }
@@ -1406,7 +1496,7 @@ export default function AdminPurchases() {
                       </select>
                       <button 
                         type="button" 
-                        onClick={() => setIsSupplierModalOpen(true)}
+                        onClick={handleOpenCreateSupplier}
                         className="p-3 bg-white/5 border border-white/10 hover:bg-white/10 rounded-xl text-gold-500 transition-all"
                         title="Cadastrar Novo Fornecedor"
                       >
@@ -1576,7 +1666,7 @@ export default function AdminPurchases() {
                             }
                           }}
                           onKeyDown={e => {
-                            if (e.key === 'Enter' && accessKeyInput.length === 44) {
+                            if (e.key === 'Enter') {
                               handleImportByAccessKey();
                             }
                           }}
@@ -1587,14 +1677,41 @@ export default function AdminPurchases() {
                       <button
                         type="button"
                         onClick={() => handleImportByAccessKey()}
-                        disabled={accessKeyInput.length !== 44 || isFetchingKey}
-                        className="bg-gold-500 hover:bg-gold-600 disabled:opacity-50 text-ink-950 font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-lg shadow-gold-500/10"
+                        disabled={isFetchingKey || accessKeyInput.trim().length === 0}
+                        className="bg-gold-500 hover:bg-gold-600 disabled:opacity-50 text-ink-950 font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-lg shadow-gold-500/10 cursor-pointer"
                       >
                         {isFetchingKey ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : '⚡ Buscar e Importar'}
                       </button>
                     </div>
+
+                    {/* DYNAMIC DIGIT COUNTER & HELP */}
+                    <div className="flex items-center justify-between text-[11px] px-1 font-mono">
+                      {accessKeyInput.length === 0 ? (
+                        <span className="text-gray-500 font-sans">
+                          Aguardando leitura do código de barras da DANFE ou digitação da chave...
+                        </span>
+                      ) : accessKeyInput.length === 44 ? (
+                        <span className="text-green-400 font-bold flex items-center gap-1 font-sans">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> 44 de 44 dígitos prontos para consulta SEFAZ
+                        </span>
+                      ) : (
+                        <span className="text-yellow-400 font-bold flex items-center gap-1 font-sans">
+                          <AlertTriangle className="w-3.5 h-3.5" /> {accessKeyInput.length}/44 dígitos (faltam {44 - accessKeyInput.length} dígitos no código)
+                        </span>
+                      )}
+                      {accessKeyInput.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setAccessKeyInput('')}
+                          className="text-gray-400 hover:text-white underline text-[10px] font-sans"
+                        >
+                          Limpar
+                        </button>
+                      )}
+                    </div>
+
                     <p className="text-[10px] text-gray-400 text-center leading-relaxed">
-                      💡 <strong>Dica Fiscal:</strong> Para carregar automaticamente todos os produtos, quantidades, custos e parcelas, arraste o arquivo <strong>.xml</strong> da nota acima. Pela chave de acesso, o sistema identifica e cadastra o fornecedor oficial na Receita Federal e o número da nota na ficha de compra.
+                      💡 <strong>Dica Fiscal:</strong> Ao bipar a DANFE física com o leitor de código de barras, os 44 dígitos são lidos e consultados instantaneamente na SEFAZ com o Certificado Digital A1. Se digitar à mão, certifique-se de digitar todos os 44 dígitos da nota.
                     </p>
                   </div>
                 </div>
@@ -1926,7 +2043,7 @@ export default function AdminPurchases() {
                   <Users className="text-gold-500 w-5 h-5" /> Cadastro de Fornecedores
                 </h3>
                 <button
-                  onClick={() => setIsSupplierModalOpen(true)}
+                  onClick={handleOpenCreateSupplier}
                   className="bg-gold-500 hover:bg-gold-600 text-ink-950 font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all flex items-center gap-2"
                 >
                   <Plus className="w-4 h-4 text-ink-950" /> Novo Fornecedor
@@ -1956,14 +2073,41 @@ export default function AdminPurchases() {
                   .map(s => (
                     <div 
                       key={s.id}
-                      className="bg-white/5 border border-white/5 rounded-2xl p-4 hover:border-gold-500/20 hover:bg-white/10 transition-all flex flex-col justify-between"
+                      className="bg-white/5 border border-white/5 rounded-2xl p-4 hover:border-gold-500/20 hover:bg-white/10 transition-all flex flex-col justify-between gap-3"
                     >
                       <div>
-                        <p className="font-bold text-white text-sm">{s.nome_fantasia || s.razao_social}</p>
-                        {s.nome_fantasia && <p className="text-[10px] text-gray-500 font-bold mt-0.5">{s.razao_social}</p>}
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-white text-sm truncate">{s.nome_fantasia || s.razao_social}</p>
+                            {s.nome_fantasia && <p className="text-[10px] text-gray-400 font-bold mt-0.5 truncate">{s.razao_social}</p>}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditSupplier(s)}
+                              className="p-2 bg-white/5 hover:bg-gold-500/20 text-gray-300 hover:text-gold-500 border border-white/10 hover:border-gold-500/30 rounded-xl transition-all"
+                              title="Editar Fornecedor"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSupplier(s)}
+                              disabled={isDeletingSupplierId === s.id}
+                              className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 rounded-xl transition-all disabled:opacity-50"
+                              title="Excluir Fornecedor"
+                            >
+                              {isDeletingSupplierId === s.id ? (
+                                <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
                         
                         <div className="mt-3 space-y-1 text-[11px] text-gray-400 font-medium">
-                          <p>CNPJ: <strong className="text-white">{s.cnpj_cpf}</strong></p>
+                          <p>CNPJ/CPF: <strong className="text-white">{s.cnpj_cpf}</strong></p>
                           {s.telefone && <p>Telefone: <strong className="text-white">{s.telefone}</strong></p>}
                           {s.email && <p>E-mail: <strong className="text-white">{s.email}</strong></p>}
                           {s.endereco && <p>Endereço: <strong className="text-white">{s.endereco}</strong></p>}
@@ -1977,18 +2121,29 @@ export default function AdminPurchases() {
         </div>
       )}
 
-      {/* CREATE SUPPLIER MODAL */}
+      {/* CREATE / EDIT SUPPLIER MODAL */}
       <AnimatePresence>
         {isSupplierModalOpen && (
           <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
-            <div onClick={() => setIsSupplierModalOpen(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <div onClick={() => { setIsSupplierModalOpen(false); setEditingSupplierId(null); }} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }} 
               animate={{ opacity: 1, scale: 1 }} 
               exit={{ opacity: 0, scale: 0.95 }}
               className="relative w-full max-w-md bg-ink-900 border border-white/10 rounded-[2.5rem] p-6 shadow-2xl overflow-y-auto max-h-[90vh]"
             >
-              <h3 className="text-lg font-display font-black text-white uppercase tracking-tight mb-6">Novo Fornecedor</h3>
+              <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
+                <h3 className="text-lg font-display font-black text-white uppercase tracking-tight">
+                  {editingSupplierId ? 'Editar Fornecedor' : 'Novo Fornecedor'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => { setIsSupplierModalOpen(false); setEditingSupplierId(null); }}
+                  className="text-gray-400 hover:text-white text-xs uppercase font-bold"
+                >
+                  ✕
+                </button>
+              </div>
 
               <form onSubmit={handleSaveSupplier} className="space-y-4">
                 <div className="space-y-1">
@@ -2062,7 +2217,7 @@ export default function AdminPurchases() {
                 <div className="flex gap-3 pt-4">
                   <button
                     type="button"
-                    onClick={() => setIsSupplierModalOpen(false)}
+                    onClick={() => { setIsSupplierModalOpen(false); setEditingSupplierId(null); }}
                     className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 font-bold py-3 rounded-xl uppercase tracking-wider text-xs border border-white/10"
                   >
                     Cancelar
@@ -2070,9 +2225,15 @@ export default function AdminPurchases() {
                   <button
                     type="submit"
                     disabled={isSavingSupplier}
-                    className="flex-1 bg-gold-500 hover:bg-gold-600 text-ink-950 font-black py-3 rounded-xl uppercase tracking-wider text-xs transition-all flex items-center justify-center gap-1.5"
+                    className="flex-1 bg-gold-500 hover:bg-gold-600 text-ink-950 font-black py-3 rounded-xl uppercase tracking-wider text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-gold-500/10"
                   >
-                    {isSavingSupplier ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : 'Cadastrar'}
+                    {isSavingSupplier ? (
+                      <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
+                    ) : editingSupplierId ? (
+                      'Salvar Alterações'
+                    ) : (
+                      'Cadastrar Fornecedor'
+                    )}
                   </button>
                 </div>
               </form>
