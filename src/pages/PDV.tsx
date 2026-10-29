@@ -30,6 +30,7 @@ import { getOptimizedImageUrl } from '../utils/image';
 import { tefService } from '../services/tef/TefService';
 import { TefConfig } from '../services/tef/types';
 import { localDb } from '../services/local/localDb';
+import { isDesktop } from '../utils/isDesktop';
 import { syncEngine } from '../services/local/syncEngine';
 import { downloadFiscalDocumentBlob, triggerPrintAndDownload } from '../services/fiscal/fiscalService';
 import { useScale } from '../services/scale/useScale';
@@ -324,6 +325,10 @@ export default function PDV() {
   };
 
   const handleOpenCaixa = async () => {
+    if (!isDesktop) {
+      alert('⚠️ Operação exclusiva do PDV instalado: Para abrir o caixa e movimentar estoque, use o aplicativo instalado no computador do caixa.');
+      return;
+    }
     if (!activeCompany) return;
     setIsOpeningCaixa(true);
     
@@ -352,6 +357,10 @@ export default function PDV() {
   };
 
   const handleCloseCaixa = async () => {
+    if (!isDesktop) {
+      alert('⚠️ Operação exclusiva do PDV instalado: O fechamento de caixa deve ser realizado diretamente no aplicativo instalado no caixa físico.');
+      return;
+    }
     if (!caixa) return;
     setIsClosingCaixa(true);
 
@@ -502,6 +511,10 @@ export default function PDV() {
   const changeAmount = receivedAmount ? Math.max(0, Number((Number(receivedAmount) - finalTotal).toFixed(2))) : 0;
 
   const handleFinalizeSale = async () => {
+    if (!isDesktop) {
+      alert('⚠️ Venda bloqueada na Web: As vendas com baixa de estoque, pesagem e emissão fiscal são exclusivas do aplicativo instalado no caixa físico.');
+      return;
+    }
     if (cart.length === 0 || !caixa || !activeCompany || !activeLocation || !selectedPaymentMethod) return;
 
     let currentTefRes = null;
@@ -1033,6 +1046,23 @@ export default function PDV() {
             Para iniciar as vendas no balcão e no caixa, é necessário registrar a abertura do turno informando o saldo inicial em dinheiro.
           </p>
 
+          {!isDesktop ? (
+            <div className="space-y-4">
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 text-center">
+                <p className="text-amber-400 font-bold text-xs uppercase tracking-wider mb-1">Modo Consulta Web</p>
+                <p className="text-gray-300 text-xs leading-relaxed">
+                  A abertura de caixa e operações de venda estão disponíveis exclusivamente no <strong>aplicativo instalado no caixa físico</strong> para garantir a exatidão do estoque e integração com balança e TEF.
+                </p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => window.location.href = '/admin'}
+                className="w-full bg-white/10 hover:bg-white/15 text-white font-bold py-3.5 rounded-2xl text-xs uppercase tracking-widest transition-all"
+              >
+                Voltar para o Painel
+              </button>
+            </div>
+          ) : (
           <form onSubmit={(e) => { e.preventDefault(); handleOpenCaixa(); }} className="space-y-6">
             <div className="space-y-2">
               <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest ml-1">Fundo de Troco (R$)</label>
@@ -1057,6 +1087,7 @@ export default function PDV() {
               )}
             </button>
           </form>
+          )}
         </div>
       </div>
     );
@@ -1064,7 +1095,17 @@ export default function PDV() {
 
   // MAIN PDV SCREEN
   return (
-    <div className="h-[calc(100vh-5rem)] bg-ink-950 flex flex-col md:flex-row">
+    <div className="flex flex-col h-[calc(100vh-5rem)]">
+      {!isDesktop && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 flex items-center justify-between text-amber-300 text-xs shrink-0">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span><strong>Modo de Consulta Web Ativo:</strong> Visualizando vendas e produtos em tempo real. Abertura/fechamento de caixa e registro de vendas com baixa de estoque são exclusivos do aplicativo instalado no caixa físico.</span>
+          </div>
+          <span className="bg-amber-500/20 text-amber-200 border border-amber-500/30 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider">Apenas Consulta</span>
+        </div>
+      )}
+      <div className="flex-1 bg-ink-950 flex flex-col md:flex-row overflow-hidden">
       
       {/* LEFT COLUMN: Shopping Cart & Totals */}
       <div className="flex-1 md:w-1/2 flex flex-col border-r border-white/10 h-full overflow-hidden bg-ink-900/30">
@@ -2087,7 +2128,7 @@ export default function PDV() {
           </div>
         )}
       </AnimatePresence>
-
+    </div>
     </div>
   );
 }

@@ -101,14 +101,71 @@ class SyncEngine {
       const syncedIds: string[] = [];
 
       // 1. Enviar vendas e atualizações locais para o Supabase
+      // Busca antecipadamente a loja padrão ativa para garantir vínculo de estoque correto
+      let defaultLojaId: string | null = null;
+      try {
+        const { data: loja } = await supabase
+          .from('locais_estoque')
+          .select('id')
+          .eq('tipo', 'loja')
+          .eq('ativo', true)
+          .limit(1)
+          .maybeSingle();
+        if (loja) defaultLojaId = loja.id;
+      } catch (_) {}
+
       for (const item of queue) {
         try {
-          if (item.type === 'product_update' || item.payload?.name || item.payload?.price !== undefined) {
+          if (item.type === 'stock_movement') {
+            const { product_id, stock, location_id, type, quantity, reason, change } = item.payload || {};
+            const targetProductId = product_id || item.payload?.id;
+            const targetStock = stock !== undefined ? stock : item.payload?.stock;
+
+            if (targetProductId && targetStock !== undefined) {
+              // 1. Atualiza na tabela products
+              await supabase.from('products').update({ stock: targetStock }).eq('id', targetProductId);
+
+              // 2. Atualiza no saldos_estoque (local loja)
+              const targetLocId = location_id || defaultLojaId;
+              if (targetLocId) {
+                await supabase.from('saldos_estoque').upsert({
+                  produto_id: targetProductId,
+                  local_estoque_id: targetLocId,
+                  saldo_atual: targetStock,
+                  saldo_reservado: 0
+                }, { onConflict: 'produto_id,local_estoque_id' });
+              }
+
+              // 3. Registra movimentação no histórico se houver dados
+              if (quantity || change) {
+                const { data: { user } } = await supabase.auth.getUser();
+                await supabase.from('movimentacoes_estoque').insert({
+                  produto_id: targetProductId,
+                  origem_local_id: change && change < 0 ? targetLocId : null,
+                  destino_local_id: change && change > 0 ? targetLocId : null,
+                  tipo_movimentacao: type || 'ajuste_manual',
+                  quantidade: quantity || Math.abs(change || 0),
+                  motivo: reason || 'Ajuste de estoque sincronizado da fila offline',
+                  usuario_id: user?.id,
+                  referencia_tipo: 'ajuste_offline'
+                });
+              }
+            }
+            syncedIds.push(item.id);
+          } else if (item.type === 'product_update' || item.payload?.name || item.payload?.price !== undefined) {
             const product = item.payload?.data || item.payload;
             if (product && product.id) {
               // Se foi apenas atualização de cadastro, não sobrescreve o estoque atual com dados velhos da fila
-              if (item.payload?.is_stock_adjustment) {
+              if (item.payload?.is_stock_adjustment || product.stock !== undefined) {
                 await supabase.from('products').update({ stock: product.stock }).eq('id', product.id);
+                if (defaultLojaId && product.stock !== undefined) {
+                  await supabase.from('saldos_estoque').upsert({
+                    produto_id: product.id,
+                    local_estoque_id: defaultLojaId,
+                    saldo_atual: product.stock,
+                    saldo_reservado: 0
+                  }, { onConflict: 'produto_id,local_estoque_id' });
+                }
               } else {
                 const { stock, ...productWithoutStock } = product;
                 await supabase.from('products').update(productWithoutStock).eq('id', product.id);
@@ -131,7 +188,7 @@ class SyncEngine {
                   quantity: it.quantity,
                   price_unit: it.price_unit,
                   subtotal: it.subtotal,
-                  local_saida_id: order.empresa_id || null
+                  local_saida_id: it.local_saida_id || defaultLojaId || order.empresa_id || null
                 }));
 
                 await supabase.rpc('registrar_venda_pdv', {
@@ -154,7 +211,12 @@ class SyncEngine {
           }
         } catch (itemErr) {
           console.error('[SyncEngine] Falha ao sincronizar item:', item, itemErr);
-          syncedIds.push(item.id); // Remove item com erro para desobstruir a fila
+          // Se for erro de rede, mantém na fila para tentar novamente
+          if (navigator.onLine === false || (itemErr as any)?.message?.includes('fetch')) {
+            // Mantém na fila
+          } else {
+            syncedIds.push(item.id); // Remove item com erro sintático para desobstruir a fila
+          }
         }
       }
 
@@ -170,7 +232,29 @@ class SyncEngine {
 
       if (!prodErr && freshProds && freshProds.length > 0) {
         const activeOnly = freshProds.filter((p: any) => p.is_deleted !== true);
-        localDb.setProducts(activeOnly);
+
+        // Proteção contra sobrescrita de modificações locais pendentes:
+        // Se houver algum produto com alteração pendente na fila, preserva o estoque local
+        const remainingQueue = localDb.getSyncQueue();
+        const pendingProductIds = new Set(
+          remainingQueue.map(q => q.payload?.product_id || q.payload?.id || q.payload?.data?.id).filter(Boolean)
+        );
+
+        if (pendingProductIds.size > 0) {
+          const currentLocal = localDb.getProducts();
+          const merged = activeOnly.map((p: any) => {
+            if (pendingProductIds.has(p.id)) {
+              const localP = currentLocal.find((lp: any) => lp.id === p.id);
+              if (localP && localP.stock !== undefined) {
+                return { ...p, stock: localP.stock };
+              }
+            }
+            return p;
+          });
+          localDb.setProducts(merged);
+        } else {
+          localDb.setProducts(activeOnly);
+        }
       }
 
       const now = new Date().toISOString();

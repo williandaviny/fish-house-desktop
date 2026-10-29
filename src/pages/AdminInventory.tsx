@@ -31,6 +31,7 @@ type Product = {
   unit: string;
   image_url: string;
   price?: number;
+  stock?: number;
   plu_codigo?: string;
   barcode?: string;
   codigo_interno?: string;
@@ -252,7 +253,7 @@ export default function AdminInventory() {
       // 1. Fetch products (ignoring deleted products)
       const { data: prods, error: prodErr } = await supabase
         .from('products')
-        .select('id, name, category, unit, image_url, price, plu_codigo, barcode, is_available, is_deleted')
+        .select('id, name, category, unit, image_url, price, plu_codigo, barcode, is_available, is_deleted, stock')
         .order('name');
       
       if (prodErr) throw prodErr;
@@ -566,8 +567,34 @@ export default function AdminInventory() {
       await fetchBalances();
       await fetchMovements();
     } catch (err: any) {
-      console.error(err);
-      showNotification('error', 'Falha ao lançar ajuste: ' + err.message);
+      console.warn('[AdminInventory] Conexão instável, salvando ajuste na fila local offline:', err);
+      try {
+        const actualChange = adjustMode === 'add' ? qtyNum : -qtyNum;
+        const existing = stockBalances.find(b => b.produto_id === adjustProduct && b.local_estoque_id === adjustLocation);
+        const newStock = Math.max(0, Number(((existing ? existing.saldo_atual : 0) + actualChange).toFixed(3)));
+        
+        localDb.updateProduct(adjustProduct, { stock: newStock });
+        localDb.enqueueSync({
+          id: `adj_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          type: 'stock_movement',
+          payload: {
+            product_id: adjustProduct,
+            location_id: adjustLocation,
+            stock: newStock,
+            change: actualChange,
+            type: adjustType,
+            quantity: qtyNum,
+            mode: adjustMode,
+            reason: adjustReason || `Ajuste manual (${adjustMode === 'add' ? 'Entrada' : 'Saída'})`
+          },
+          created_at: new Date().toISOString()
+        });
+        showNotification('success', 'Ajuste gravado localmente e agendado para sincronizar com a nuvem!');
+        setAdjustQty('');
+        setAdjustReason('');
+      } catch (queueErr) {
+        showNotification('error', 'Falha ao lançar ajuste: ' + err.message);
+      }
     } finally {
       setIsSubmittingAdjust(false);
     }

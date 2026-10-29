@@ -200,7 +200,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   const menuItems = [
     { name: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
-    { name: 'PDV', icon: Calculator, path: '/admin/pdv' },
+    { name: isDesktop ? 'PDV' : 'PDV (Consulta)', icon: Calculator, path: '/admin/pdv' },
     { name: 'Estoque', icon: Warehouse, path: '/admin/estoque' },
     { name: 'Industrialização', icon: Layers, path: '/admin/industrializacao' },
     { name: 'Compras', icon: FileSpreadsheet, path: '/admin/compras' },

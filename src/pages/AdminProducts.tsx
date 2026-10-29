@@ -463,9 +463,19 @@ export default function AdminProducts() {
         referencia_tipo: 'reposicao_rapida'
       });
     } catch (error: any) {
-      console.error('Erro ao atualizar estoque:', error);
-      alert('Erro ao atualizar estoque: ' + error.message);
-      fetchProducts();
+      console.warn('[AdminProducts] Falha na rede ao atualizar estoque no Supabase, enfileirando localmente:', error);
+      localDb.enqueueSync({
+        id: `replenish_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        type: 'stock_movement',
+        payload: {
+          product_id: id,
+          stock: newStock,
+          is_stock_adjustment: true,
+          quantity: amount,
+          reason: `Reposição rápida de estoque (+${amount})`
+        },
+        created_at: new Date().toISOString()
+      });
     }
   };
 

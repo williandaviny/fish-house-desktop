@@ -73,12 +73,26 @@ export const localDb = {
     }
   },
 
-  updateProduct(id: string, updates: Partial<any>): void {
+  updateProduct(id: string, updates: Partial<any>, shouldEnqueue = false): void {
     const list = this.getProducts();
     const idx = list.findIndex(p => p.id === id);
     if (idx >= 0) {
       list[idx] = { ...list[idx], ...updates };
       this.setProducts(list);
+
+      if (shouldEnqueue) {
+        this.enqueueSync({
+          id: `stock_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          type: 'stock_movement',
+          payload: {
+            product_id: id,
+            stock: updates.stock,
+            is_stock_adjustment: true,
+            ...updates
+          },
+          created_at: new Date().toISOString()
+        });
+      }
     }
   },
 

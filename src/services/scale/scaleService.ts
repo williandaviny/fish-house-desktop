@@ -61,6 +61,19 @@ class ScaleService {
       (navigator as any).serial.addEventListener?.('disconnect', () => {
         this.handleDisconnect('Balança desconectada fisicamente da porta USB/Serial.');
       });
+
+      (navigator as any).serial.addEventListener?.('connect', async (event: any) => {
+        if (this.state.config.autoConnect && this.state.status !== 'connected') {
+          try {
+            const port = event.port || (await (navigator as any).serial.getPorts())[0];
+            if (port) {
+              await this.connectWithPort(port);
+            }
+          } catch (e) {
+            console.warn('Erro ao auto-reconectar balança reconectada:', e);
+          }
+        }
+      });
     }
   }
 

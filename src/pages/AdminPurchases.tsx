@@ -19,6 +19,7 @@ import {
   Barcode
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { localDb } from '../services/local/localDb';
 import { motion, AnimatePresence } from 'motion/react';
 import { useScale } from '../services/scale/useScale';
 
@@ -123,6 +124,112 @@ export default function AdminPurchases() {
   } | null>(null);
   const [mappedProducts, setMappedProducts] = useState<Record<string, string>>({}); // cProd -> internal product ID
   
+  // New Product Modal from Invoice/Barcode
+  const [isNewProductModalOpen, setIsNewProductModalOpen] = useState(false);
+  const [newProductForm, setNewProductForm] = useState({
+    name: '',
+    barcode: '',
+    category: '🐟 Peixes',
+    unit: 'un',
+    custo_medio: 0,
+    price: 0,
+    xmlItemRef: null as any
+  });
+  const [isSavingNewProduct, setIsSavingNewProduct] = useState(false);
+
+  const availableCategories = [
+    '🐟 Peixes', 
+    '🦐 Camarões', 
+    '🦀 Frutos do Mar', 
+    '❄️ Congelados', 
+    '🍱 Combos',
+    '🧂 Especiarias & Temperos', 
+    '🌾 Farinhas & Grãos', 
+    '🍷 Bebidas', 
+    '🍽️ Acompanhamentos', 
+    '🥫 Molhos', 
+    '🍤 Empanados'
+  ];
+
+  const handleOpenCreateProductModal = (params: { name?: string; barcode?: string; unit?: string; cost?: number; xmlItem?: any }) => {
+    const rawCost = params.cost || 0;
+    const suggestedPrice = rawCost > 0 ? Number((rawCost * 1.4).toFixed(2)) : 0;
+    let unit = (params.unit || 'un').toLowerCase();
+    if (unit !== 'kg' && unit !== 'un') unit = 'un';
+
+    setNewProductForm({
+      name: params.name || '',
+      barcode: params.barcode || '',
+      category: '🐟 Peixes',
+      unit: unit,
+      custo_medio: rawCost,
+      price: suggestedPrice,
+      xmlItemRef: params.xmlItem || null
+    });
+    setIsNewProductModalOpen(true);
+  };
+
+  const handleSaveNewProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProductForm.name.trim()) {
+      showNotification('error', 'Informe o nome do produto.');
+      return;
+    }
+
+    setIsSavingNewProduct(true);
+    try {
+      const productPayload = {
+        name: newProductForm.name.trim(),
+        category: newProductForm.category,
+        unit: newProductForm.unit,
+        barcode: newProductForm.barcode.trim() || null,
+        custo_medio: Number(newProductForm.custo_medio) || 0,
+        price: Number(newProductForm.price) || Number(newProductForm.custo_medio) || 0,
+        stock: 0,
+        is_available: true,
+        is_deleted: false
+      };
+
+      const { data, error } = await supabase
+        .from('products')
+        .insert([productPayload])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Salva no localDb e adiciona à lista
+      localDb.saveProduct(data, false);
+      setProducts(prev => [...prev, data].sort((a,b) => a.name.localeCompare(b.name)));
+
+      if (newProductForm.xmlItemRef) {
+        setMappedProducts(prev => ({
+          ...prev,
+          [newProductForm.xmlItemRef.cProd]: data.id
+        }));
+        showNotification('success', `Produto "${data.name}" cadastrado e vinculado à nota!`);
+      } else {
+        const defaultLoc = locations.find(l => l.tipo === 'loja')?.id || locations[0]?.id || '';
+        const costUnit = data.custo_medio || 10.00;
+        setPurchaseItems(prev => [...prev, {
+          produto_id: data.id,
+          quantidade: 1,
+          custo_unitario: costUnit,
+          local_destino_id: defaultLoc,
+          subtotal: costUnit
+        }]);
+        showNotification('success', `Produto "${data.name}" cadastrado e adicionado à compra!`);
+      }
+
+      setIsNewProductModalOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      showNotification('error', 'Erro ao cadastrar produto: ' + err.message);
+    } finally {
+      setIsSavingNewProduct(false);
+    }
+  };
+
   // Suppliers Form/List
   const [supplierSearch, setSupplierSearch] = useState('');
   const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
@@ -281,6 +388,11 @@ export default function AdminPurchases() {
         }]);
         showNotification('success', `${standardProd.name} adicionado ao carrinho.`);
       }
+    } else {
+      // Produto não encontrado pelo leitor de código de barras: abre cadastro na hora!
+      playBeep();
+      showNotification('error', `Código ${code} não encontrado no estoque! Abrindo tela para cadastrar...`);
+      handleOpenCreateProductModal({ barcode: code });
     }
   };
 
@@ -319,130 +431,91 @@ export default function AdminPurchases() {
     setTimeout(() => setNotification(null), 5000);
   };
 
-  const generateMockNFeXML = (accessKey: string) => {
-    const cnpj = accessKey.substring(6, 20) || '12345678000199';
-    const rawNumber = accessKey.substring(25, 34) || '000000123';
-    const number = parseInt(rawNumber, 10).toString();
-    
-    const mockItems = [
-      { cProd: 'PROD001', cEAN: '7891020304051', xProd: 'Salmão Premium Inteiro', qCom: 25.5, uCom: 'KG', vUnCom: 55.90 },
-      { cProd: 'PROD002', cEAN: '7891020304068', xProd: 'Filé de Tilápia Congelado', qCom: 40.0, uCom: 'KG', vUnCom: 38.50 },
-      { cProd: 'PROD003', cEAN: '7891020304075', xProd: 'Camarão Cinza Inteiro 21/25', qCom: 15.0, uCom: 'KG', vUnCom: 49.90 }
-    ];
-
-    const totalProd = mockItems.reduce((acc, item) => acc + (item.qCom * item.vUnCom), 0);
-    const totalNF = totalProd.toFixed(2);
-
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-  <NFe>
-    <infNFe Id="NFe${accessKey}" versao="4.00">
-      <ide>
-        <nNF>${number}</nNF>
-        <dhEmi>${new Date().toISOString()}</dhEmi>
-      </ide>
-      <emit>
-        <CNPJ>${cnpj}</CNPJ>
-        <xNome>Frigopeixe Distribuição de Pescados LTDA</xNome>
-        <xFant>Frigopeixe</xFant>
-        <IE>1234567890</IE>
-        <fone>4733445566</fone>
-        <email>vendas@frigopeixe.com.br</email>
-        <enderEmit>
-          <xLgr>Rodovia Governador Mario Covas</xLgr>
-          <nro>4500</nro>
-          <xBairro>Espinheiros</xBairro>
-          <xMun>Itajaí</xMun>
-          <UF>SC</UF>
-          <CEP>88311000</CEP>
-        </enderEmit>
-      </emit>
-      ${mockItems.map((item, index) => `
-      <det nItem="${index + 1}">
-        <prod>
-          <cProd>${item.cProd}</cProd>
-          <cEAN>${item.cEAN}</cEAN>
-          <xProd>${item.xProd}</xProd>
-          <qCom>${item.qCom}</qCom>
-          <uCom>${item.uCom}</uCom>
-          <vUnCom>${item.vUnCom}</vUnCom>
-          <vProd>${(item.qCom * item.vUnCom).toFixed(2)}</vProd>
-        </prod>
-      </det>`).join('')}
-      <total>
-        <ICMSTot>
-          <vNF>${totalNF}</vNF>
-        </ICMSTot>
-      </total>
-      <cobr>
-        <dup>
-          <nDup>001</nDup>
-          <dVenc>${new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}</dVenc>
-          <vDup>${totalNF}</vDup>
-        </dup>
-      </cobr>
-    </infNFe>
-  </NFe>
-</nfeProc>`;
+  // Consulta CNPJ real na Receita Federal
+  const fetchCnpjData = async (rawCnpj: string) => {
+    const cleanCnpj = rawCnpj.replace(/\D/g, '');
+    try {
+      const res = await fetch(`https://minhareceita.org/${cleanCnpj}`);
+      if (res.ok) {
+        const d = await res.json();
+        return {
+          cnpj: cleanCnpj,
+          razaoSocial: d.razao_social || 'Fornecedor',
+          nomeFantasia: d.nome_fantasia || d.razao_social || 'Fornecedor',
+          telefone: d.ddd_telefone_1 ? `(${d.ddd_telefone_1.slice(0,2)}) ${d.ddd_telefone_1.slice(2)}` : '',
+          email: d.email || '',
+          endereco: `${d.descricao_tipo_de_logradouro || ''} ${d.logradouro || ''}, ${d.numero || ''} - ${d.bairro || ''}, ${d.municipio || ''} - ${d.uf || ''}`
+        };
+      }
+    } catch (e) {
+      console.warn('Erro ao consultar Minha Receita:', e);
+    }
+    return null;
   };
 
   const handleImportByAccessKey = async (keyParam?: string) => {
-    const key = (keyParam || accessKeyInput).trim();
+    const key = (keyParam || accessKeyInput).replace(/\D/g, '').trim();
     if (key.length !== 44) {
-      showNotification('error', 'A chave de acesso deve possuir exatamente 44 dígitos.');
+      showNotification('error', 'A chave de acesso deve possuir exatamente 44 dígitos numéricos.');
       return;
     }
-    
-    setIsFetchingKey(true);
-    showNotification('success', 'Conectando à SEFAZ e importando XML da Nota Fiscal...');
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    try {
-      const xml = generateMockNFeXML(key);
-      const parsed = parseNFXML(xml);
-      setParsedInvoice(parsed);
-      
-      const cleanXmlCnpj = parsed.fornecedor.cnpj.replace(/\D/g, '');
-      const matchedSup = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cleanXmlCnpj);
-      const initialMap: Record<string, string> = {};
-      
-      if (matchedSup) {
-        const { data: mappings } = await supabase
-          .from('fornecedor_produto_mapeamento')
-          .select('*')
-          .eq('fornecedor_id', matchedSup.id);
 
-        parsed.itens.forEach(item => {
-          const dbMatch = mappings?.find(m => m.codigo_fornecedor === item.cProd);
-          if (dbMatch) {
-            initialMap[item.cProd] = dbMatch.produto_id;
-            return;
-          }
-          if (item.cEAN && item.cEAN !== 'SEM GTIN' && item.cEAN !== '0') {
-            const eanMatch = products.find(p => p.barcode === item.cEAN);
-            if (eanMatch) {
-              initialMap[item.cProd] = eanMatch.id;
-              return;
-            }
-          }
-        });
-      } else {
-        parsed.itens.forEach(item => {
-          if (item.cEAN && item.cEAN !== 'SEM GTIN' && item.cEAN !== '0') {
-            const eanMatch = products.find(p => p.barcode === item.cEAN);
-            if (eanMatch) {
-              initialMap[item.cProd] = eanMatch.id;
-            }
-          }
-        });
-      }
+    setIsFetchingKey(true);
+    showNotification('success', 'Consultando dados da chave de acesso na Receita Federal...');
+
+    try {
+      const cnpj = key.substring(6, 20);
+      const rawNumber = key.substring(25, 34);
+      const nNf = parseInt(rawNumber, 10).toString();
+
+      // 1. Busca os dados reais do fornecedor pelo CNPJ
+      let supplierInfo = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cnpj);
       
-      setMappedProducts(initialMap);
-      showNotification('success', `Nota Fiscal #${parsed.numero} importada com sucesso pela Chave de Acesso!`);
+      if (!supplierInfo) {
+        const apiData = await fetchCnpjData(cnpj);
+        if (apiData) {
+          // Cadastra automaticamente o fornecedor real no banco
+          const { data: newSup, error: supErr } = await supabase
+            .from('fornecedores')
+            .insert([{
+              cnpj_cpf: apiData.cnpj,
+              razao_social: apiData.razaoSocial,
+              nome_fantasia: apiData.nomeFantasia,
+              telefone: apiData.telefone,
+              email: apiData.email,
+              endereco: apiData.endereco
+            }])
+            .select()
+            .single();
+
+          if (!supErr && newSup) {
+            supplierInfo = newSup;
+            setSuppliers(prev => [...prev, newSup].sort((a,b) => a.razao_social.localeCompare(b.razao_social)));
+          }
+        }
+      }
+
+      // Preenche a ficha da compra manual com os dados reais
+      setSelectedSupplier(supplierInfo?.id || '');
+      setDocNumber(nNf);
+      setActiveTab('new_purchase');
+
+      const supName = supplierInfo?.nome_fantasia || supplierInfo?.razao_social || `CNPJ ${cnpj}`;
+      alert(
+        `ℹ️ NOTA FISCAL IDENTIFICADA!\n\n` +
+        `• Fornecedor Real: ${supName}\n` +
+        `• CNPJ: ${cnpj}\n` +
+        `• Nota Fiscal Nº: ${nNf}\n\n` +
+        `⚠️ ATENÇÃO SOBRE OS ITENS E VALORES:\n` +
+        `Por exigência fiscal da SEFAZ, o download dos produtos e valores da nota só é liberado mediante o arquivo .xml emitido pelo fornecedor.\n\n` +
+        `• Se você tiver o arquivo .xml enviado pelo fornecedor, arraste-o na aba "Importar XML" para preenchimento 100% automático dos itens e faturas.\n` +
+        `• Ou, adicione os produtos recebidos aqui na ficha com o fornecedor e nota já selecionados!`
+      );
+
+      showNotification('success', `Fornecedor ${supName} e NF-e #${nNf} identificados com sucesso!`);
     } catch (err: any) {
       console.error(err);
-      showNotification('error', 'Falha ao buscar nota fiscal pela chave: ' + err.message);
+      showNotification('error', 'Falha ao identificar chave da nota: ' + err.message);
     } finally {
       setIsFetchingKey(false);
       setAccessKeyInput('');
@@ -465,7 +538,7 @@ export default function AdminPurchases() {
       setSuppliers(sups || []);
 
       // 3. Fetch stock locations
-      const { data: locs } = await supabase.from('locais_estoque').select('id, nome').eq('ativo', true).order('nome');
+      const { data: locs } = await supabase.from('locais_estoque').select('id, nome, tipo').eq('ativo', true).order('nome');
       setLocations(locs || []);
       if (locs && locs.length > 0) {
         setXmlLocationId(locs[0].id);
@@ -647,10 +720,14 @@ export default function AdminPurchases() {
           ? Number((((currentStock * currentCusto) + (item.quantidade * item.custo_unitario)) / newStock).toFixed(2))
           : item.custo_unitario;
 
-        await supabase
-          .from('products')
-          .update({ custo_medio: newCusto })
-          .eq('id', item.produto_id);
+        const destLoc = locations.find(l => l.id === item.local_destino_id);
+        const isLoja = destLoc?.tipo === 'loja';
+        if (isLoja) {
+          await supabase.from('products').update({ stock: newStock, custo_medio: newCusto }).eq('id', item.produto_id);
+        } else {
+          await supabase.from('products').update({ custo_medio: newCusto }).eq('id', item.produto_id);
+        }
+        localDb.updateProduct(item.produto_id, isLoja ? { stock: newStock, custo_medio: newCusto } : { custo_medio: newCusto }, false);
       }
 
       // 3. Create contas_pagar title
@@ -1005,10 +1082,14 @@ export default function AdminPurchases() {
           ? Number((((currentStock * currentCusto) + (item.qCom * item.vUnCom)) / newStock).toFixed(2))
           : item.vUnCom;
 
-        await supabase
-          .from('products')
-          .update({ custo_medio: newCusto })
-          .eq('id', prodId);
+        const destLoc = locations.find(l => l.id === xmlLocationId);
+        const isLoja = destLoc?.tipo === 'loja';
+        if (isLoja) {
+          await supabase.from('products').update({ stock: newStock, custo_medio: newCusto }).eq('id', prodId);
+        } else {
+          await supabase.from('products').update({ custo_medio: newCusto }).eq('id', prodId);
+        }
+        localDb.updateProduct(prodId, isLoja ? { stock: newStock, custo_medio: newCusto } : { custo_medio: newCusto }, false);
       }
 
       // 4. Generate Contas a Pagar titles based on duplicatas
@@ -1477,8 +1558,8 @@ export default function AdminPurchases() {
                         {isFetchingKey ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : '⚡ Buscar e Importar'}
                       </button>
                     </div>
-                    <p className="text-[10px] text-gray-500 text-center">
-                      Ao aproximar o leitor de código de barras na DANFE impressa, a nota é identificada e importada automaticamente.
+                    <p className="text-[10px] text-gray-400 text-center leading-relaxed">
+                      💡 <strong>Dica Fiscal:</strong> Para carregar automaticamente todos os produtos, quantidades, custos e parcelas, arraste o arquivo <strong>.xml</strong> da nota acima. Pela chave de acesso, o sistema identifica e cadastra o fornecedor oficial na Receita Federal e o número da nota na ficha de compra.
                     </p>
                   </div>
                 </div>
@@ -1601,21 +1682,37 @@ export default function AdminPurchases() {
 
                                 <td className="py-4 min-w-[280px]">
                                   <div className="flex flex-col gap-1.5">
-                                    <select
-                                      value={internalId || ''}
-                                      onChange={e => setMappedProducts({...mappedProducts, [item.cProd]: e.target.value})}
-                                      className={`w-full max-w-[280px] bg-ink-950 border rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none cursor-pointer ${
-                                        internalId 
-                                        ? 'border-green-500/30 focus:border-green-500' 
-                                        : 'border-yellow-500/30 focus:border-yellow-500'
-                                      }`}
-                                      style={{ colorScheme: 'dark' }}
-                                    >
-                                      <option value="">Associe um produto do estoque...</option>
-                                      {products.map(p => (
-                                        <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
-                                      ))}
-                                    </select>
+                                    <div className="flex gap-2 items-center">
+                                      <select
+                                        value={internalId || ''}
+                                        onChange={e => setMappedProducts({...mappedProducts, [item.cProd]: e.target.value})}
+                                        className={`flex-1 bg-ink-950 border rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none cursor-pointer ${
+                                          internalId 
+                                          ? 'border-green-500/30 focus:border-green-500' 
+                                          : 'border-yellow-500/30 focus:border-yellow-500'
+                                        }`}
+                                        style={{ colorScheme: 'dark' }}
+                                      >
+                                        <option value="">Associe um produto do estoque...</option>
+                                        {products.map(p => (
+                                          <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
+                                        ))}
+                                      </select>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenCreateProductModal({
+                                          name: item.xProd,
+                                          barcode: item.cEAN && item.cEAN !== 'SEM GTIN' ? item.cEAN : '',
+                                          unit: item.uCom,
+                                          cost: item.vUnCom,
+                                          xmlItem: item
+                                        })}
+                                        className="p-2 bg-gold-500/10 hover:bg-gold-500/20 text-gold-500 border border-gold-500/20 rounded-xl transition-all shrink-0"
+                                        title="Cadastrar como Novo Produto"
+                                      >
+                                        <Plus className="w-4 h-4" />
+                                      </button>
+                                    </div>
                                     {internalId ? (
                                        internalProd?.barcode && item.cEAN && internalProd.barcode === item.cEAN ? (
                                          <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md w-fit">
