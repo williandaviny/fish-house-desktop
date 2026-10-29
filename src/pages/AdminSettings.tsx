@@ -128,6 +128,13 @@ export default function AdminSettings() {
   });
   const [editingSpecialDateIdx, setEditingSpecialDateIdx] = useState<number | null>(null);
 
+  // Certificado Digital A1 states
+  const [certInfo, setCertInfo] = useState<CertificadoInfo | null>(null);
+  const [certFile, setCertFile] = useState<File | null>(null);
+  const [certPassword, setCertPassword] = useState('');
+  const [isUploadingCert, setIsUploadingCert] = useState(false);
+  const certFileInputRef = React.useRef<HTMLInputElement | null>(null);
+
   // Scale & Tara states
   const [taras, setTaras] = useState<any[]>([]);
   const [tarasLoading, setTarasLoading] = useState(false);

@@ -32,7 +32,6 @@ async fn download_and_install_update(app: AppHandle, url: String) -> Result<(), 
     let temp_dir = std::env::temp_dir();
     let installer_path = temp_dir.join("fishhouse_update_setup.exe");
     let script_path = temp_dir.join("fishhouse_update_relaunch.bat");
-    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
 
     let client = reqwest::Client::builder()
         .user_agent("FishHouse-Desktop-Updater/1.2")
@@ -67,16 +66,14 @@ async fn download_and_install_update(app: AppHandle, url: String) -> Result<(), 
     #[cfg(target_os = "windows")]
     {
         let installer_str = installer_path.to_string_lossy().to_string();
-        let current_exe_str = current_exe.to_string_lossy().to_string();
 
         let bat_content = format!(
             "@echo off\r\n\
-            timeout /t 2 /nobreak > nul\r\n\
-            start /wait \"\" \"{installer}\" /S\r\n\
-            start \"\" \"{app}\"\r\n\
+            ping 127.0.0.1 -n 3 > nul\r\n\
+            taskkill /F /IM \"Fish House Desktop.exe\" > nul 2>&1\r\n\
+            start \"\" \"{installer}\"\r\n\
             (goto) 2>nul & del \"%~f0\"\r\n",
-            installer = installer_str,
-            app = current_exe_str
+            installer = installer_str
         );
 
         let mut bat_file = File::create(&script_path).map_err(|e| e.to_string())?;

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Sparkles, Download, X, CheckCircle, RefreshCw, Zap } from 'lucide-react';
+import { Sparkles, Download, X, CheckCircle, RefreshCw, Zap, ExternalLink } from 'lucide-react';
 import { UpdaterService, UpdateInfo, APP_VERSION } from '../services/updater/updater';
 import { isDesktop } from '../utils/isDesktop';
 
@@ -18,7 +18,8 @@ export const UpdateModal: React.FC = () => {
     const timer = setTimeout(async () => {
       try {
         const info = await UpdaterService.checkForUpdates();
-        if (info.hasUpdate) {
+        const dismissed = sessionStorage.getItem('fish_dismissed_update');
+        if (info.hasUpdate && dismissed !== info.latestVersion) {
           setUpdateInfo(info);
           setModalOpen(true);
         }
@@ -30,8 +31,30 @@ export const UpdateModal: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  const handleDismiss = () => {
+    if (updateInfo) {
+      sessionStorage.setItem('fish_dismissed_update', updateInfo.latestVersion);
+    }
+    setModalOpen(false);
+  };
+
+  const handleOpenManualDownload = async () => {
+    const targetUrl = updateInfo?.downloadUrl || 'https://github.com/williandaviny/fish-house-desktop/releases/latest';
+    try {
+      const tauri = (window as any).__TAURI__;
+      const invoke = tauri?.core?.invoke || tauri?.invoke || (window as any).__TAURI_INTERNALS__?.invoke;
+      if (invoke) {
+        await invoke('open_url', { url: targetUrl });
+      } else {
+        window.open(targetUrl, '_blank');
+      }
+    } catch {
+      window.open(targetUrl, '_blank');
+    }
+  };
+
   const handleAtualizarSilencioso = async () => {
-    const targetUrl = updateInfo?.downloadUrl || 'https://github.com/williandaviny/fish-house-desktop/releases';
+    const targetUrl = updateInfo?.downloadUrl || 'https://github.com/williandaviny/fish-house-desktop/releases/latest';
 
     try {
       setAtualizando(true);
@@ -55,7 +78,7 @@ export const UpdateModal: React.FC = () => {
           if (pct < 100) {
             setStatusMsg(`Baixando atualização: ${pct}% concluído...`);
           } else {
-            setStatusMsg('Download finalizado! Instalando e reiniciando...');
+            setStatusMsg('Download finalizado! Abrindo instalador da nova versão...');
           }
         });
       }
@@ -66,16 +89,7 @@ export const UpdateModal: React.FC = () => {
     } catch (err: any) {
       console.error('Erro na atualizacao nativa, abrindo navegador como fallback:', err);
       setStatusMsg('Redirecionando para download...');
-      try {
-        const invoke = (window as any).__TAURI__?.core?.invoke || (window as any).__TAURI__?.invoke || (window as any).__TAURI_INTERNALS__?.invoke;
-        if (invoke) {
-          await invoke('open_url', { url: targetUrl });
-        } else {
-          window.open(targetUrl, '_blank');
-        }
-      } catch {
-        window.open(targetUrl, '_blank');
-      }
+      await handleOpenManualDownload();
       setAtualizando(false);
     }
   };
@@ -99,7 +113,7 @@ export const UpdateModal: React.FC = () => {
           </div>
           {!atualizando && (
             <button
-              onClick={() => setModalOpen(false)}
+              onClick={handleDismiss}
               className="p-1 rounded-lg text-gray-400 hover:text-white"
             >
               <X size={18} />
@@ -133,7 +147,7 @@ export const UpdateModal: React.FC = () => {
             </div>
             <p className="text-[11px] text-gray-400 text-center flex items-center justify-center space-x-1.5 pt-1">
               <Zap size={12} className="text-gold-400" />
-              <span>O sistema reiniciará sozinho em poucos segundos. Não feche a janela.</span>
+              <span>O instalador será aberto para aplicar a nova versão.</span>
             </p>
           </div>
         ) : (
@@ -144,23 +158,36 @@ export const UpdateModal: React.FC = () => {
         )}
 
         {!atualizando && (
-          <div className="flex space-x-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setModalOpen(false)}
-              className="flex-1 py-2.5 rounded-xl bg-ink-950 hover:bg-white/5 text-gray-300 font-semibold text-xs transition border border-white/10"
-            >
-              Lembrar Depois
-            </button>
+          <div className="space-y-2.5 pt-2">
+            <div className="flex space-x-2">
+              <button
+                type="button"
+                onClick={handleDismiss}
+                className="flex-1 py-2.5 rounded-xl bg-ink-950 hover:bg-white/5 text-gray-300 font-semibold text-xs transition border border-white/10"
+              >
+                Lembrar Depois
+              </button>
 
-            <button
-              type="button"
-              onClick={handleAtualizarSilencioso}
-              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-gold-400 via-gold-500 to-gold-600 hover:brightness-110 text-ink-950 font-bold text-xs flex items-center justify-center space-x-2 transition shadow-lg shadow-gold-500/20 cursor-pointer"
-            >
-              <Download size={14} />
-              <span>Atualizar Agora (Automático)</span>
-            </button>
+              <button
+                type="button"
+                onClick={handleAtualizarSilencioso}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-gold-400 via-gold-500 to-gold-600 hover:brightness-110 text-ink-950 font-bold text-xs flex items-center justify-center space-x-2 transition shadow-lg shadow-gold-500/20 cursor-pointer"
+              >
+                <Download size={14} />
+                <span>Atualizar Agora (Automático)</span>
+              </button>
+            </div>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={handleOpenManualDownload}
+                className="text-[11px] text-gray-400 hover:text-gold-400 underline transition cursor-pointer inline-flex items-center space-x-1"
+              >
+                <span>Baixar instalador (.exe) manualmente</span>
+                <ExternalLink size={10} />
+              </button>
+            </div>
           </div>
         )}
       </div>
