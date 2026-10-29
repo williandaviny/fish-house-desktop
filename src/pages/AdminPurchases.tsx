@@ -475,9 +475,33 @@ export default function AdminPurchases() {
         // Sucesso absoluto: XML recebido da SEFAZ! Processa todos os itens e faturas reais
         const parsed = parseNFXML(sefazRes.xml);
         setParsedInvoice(parsed);
+        setActiveTab('import_xml');
 
         const cleanXmlCnpj = parsed.fornecedor.cnpj.replace(/\D/g, '');
-        const matchedSup = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cleanXmlCnpj);
+        let matchedSup = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cleanXmlCnpj);
+
+        // Se o fornecedor do XML ainda não estiver cadastrado, cadastra automaticamente
+        if (!matchedSup && cleanXmlCnpj) {
+          const { data: autoSup } = await supabase
+            .from('fornecedores')
+            .insert([{
+              cnpj_cpf: parsed.fornecedor.cnpj,
+              razao_social: parsed.fornecedor.razaoSocial,
+              nome_fantasia: parsed.fornecedor.nomeFantasia || parsed.fornecedor.razaoSocial,
+              inscricao_estadual: parsed.fornecedor.ie || null,
+              telefone: parsed.fornecedor.telefone || null,
+              email: parsed.fornecedor.email || null,
+              endereco: parsed.fornecedor.endereco || null
+            }])
+            .select()
+            .single();
+
+          if (autoSup) {
+            matchedSup = autoSup;
+            setSuppliers(prev => [...prev, autoSup].sort((a, b) => a.razao_social.localeCompare(b.razao_social)));
+          }
+        }
+
         const initialMap: Record<string, string> = {};
 
         if (matchedSup) {
@@ -508,52 +532,12 @@ export default function AdminPurchases() {
 
         setMappedProducts(initialMap);
         setAccessKeyInput('');
-        showNotification('success', `⚡ NF-e #${parsed.numero} baixada da SEFAZ com todos os produtos!`);
+        showNotification('success', `⚡ NF-e #${parsed.numero} (${parsed.fornecedor.nomeFantasia || parsed.fornecedor.razaoSocial}) carregada com ${parsed.itens.length} produtos da SEFAZ!`);
         return;
       }
 
-      // 2. Se a SEFAZ não liberou o XML (ex: não manifestada, web sem desktop, etc):
-      if (sefazRes.error) {
-        showNotification('error', sefazRes.error);
-      }
-
-      const cnpj = key.substring(6, 20);
-      const rawNumber = key.substring(25, 34);
-      const nNf = parseInt(rawNumber, 10).toString();
-
-      // Busca os dados reais do fornecedor pelo CNPJ na Receita Federal
-      let supplierInfo = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cnpj);
-      
-      if (!supplierInfo) {
-        const apiData = await fetchCnpjData(cnpj);
-        if (apiData) {
-          const { data: newSup, error: supErr } = await supabase
-            .from('fornecedores')
-            .insert([{
-              cnpj_cpf: apiData.cnpj,
-              razao_social: apiData.razaoSocial,
-              nome_fantasia: apiData.nomeFantasia,
-              telefone: apiData.telefone,
-              email: apiData.email,
-              endereco: apiData.endereco
-            }])
-            .select()
-            .single();
-
-          if (!supErr && newSup) {
-            supplierInfo = newSup;
-            setSuppliers(prev => [...prev, newSup].sort((a,b) => a.razao_social.localeCompare(b.razao_social)));
-          }
-        }
-      }
-
-      // Preenche a ficha da compra manual com os dados do fornecedor
-      setSelectedSupplier(supplierInfo?.id || '');
-      setDocNumber(nNf);
-      setActiveTab('new_purchase');
-
-      const supName = supplierInfo?.nome_fantasia || supplierInfo?.razao_social || `CNPJ ${cnpj}`;
-      showNotification('success', `✅ Dados da Nota nº ${nNf} identificados! Fornecedor: ${supName}.`);
+      // 2. Se a SEFAZ não liberou o XML: mostra o motivo real sem esconder o erro
+      showNotification('error', sefazRes.error || 'A SEFAZ não retornou os produtos para esta chave.');
     } catch (err: any) {
       console.error(err);
       showNotification('error', 'Falha ao processar chave da nota: ' + err.message);

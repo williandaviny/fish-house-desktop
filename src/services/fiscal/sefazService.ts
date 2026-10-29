@@ -138,9 +138,15 @@ export const sefazService = {
     const localBase64 = localStorage.getItem(STORAGE_KEYS.CERT_BASE64);
     const localPassword = localStorage.getItem(STORAGE_KEYS.CERT_PASSWORD);
 
-    // 1. No Desktop (Tauri), chama a consulta direta nativa via mTLS na SEFAZ com o Certificado Digital A1
+    // 1. No Desktop (Tauri), tenta a consulta direta nativa via mTLS na SEFAZ com o Certificado Digital A1
     const tauri = (window as any).__TAURI__;
-    const invoke = tauri?.core?.invoke || tauri?.invoke || (window as any).__TAURI_INTERNALS__?.invoke;
+    const internals = (window as any).__TAURI_INTERNALS__;
+    const invoke =
+      tauri?.core?.invoke ||
+      tauri?.invoke ||
+      (internals?.invoke ? internals.invoke.bind(internals) : null);
+
+    let lastError = '';
 
     if (invoke) {
       try {
@@ -151,22 +157,50 @@ export const sefazService = {
           pfxPassword: localPassword || '12345'
         });
 
-        if (xml && xml.includes('<infNFe')) {
+        if (xml && typeof xml === 'string' && xml.includes('<infNFe')) {
           return { success: true, xml };
         }
-        return { success: false, error: 'A SEFAZ não retornou o conteúdo da NF-e para esta chave.' };
       } catch (tauriErr: any) {
-        console.warn('[SefazService] Erro na consulta nativa SEFAZ Tauri:', tauriErr);
-        return {
-          success: false,
-          error: typeof tauriErr === 'string' ? tauriErr : (tauriErr?.message || 'Falha ao consultar SEFAZ.')
-        };
+        console.warn('[SefazService] Tentando fallback HTTP após erro Tauri:', tauriErr);
+        lastError = typeof tauriErr === 'string' ? tauriErr : (tauriErr?.message || '');
+      }
+    }
+
+    // 2. Consulta via servidor Node/Express (/api/sefaz-dfe local ou produção peixariafishhouse.com.br)
+    const endpoints = [
+      '/api/sefaz-dfe',
+      'https://peixariafishhouse.com.br/api/sefaz-dfe'
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accessKey: cleanKey,
+            pfxBase64: localBase64 || null,
+            pfxPassword: localPassword || '12345'
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data?.success && data?.xml && data.xml.includes('<infNFe')) {
+            return { success: true, xml: data.xml };
+          }
+          if (data?.error) {
+            lastError = data.error;
+          }
+        }
+      } catch (httpErr: any) {
+        console.warn(`[SefazService] Falha no endpoint ${endpoint}:`, httpErr);
       }
     }
 
     return {
       success: false,
-      error: 'Para baixar o XML diretamente da SEFAZ com o Certificado Digital A1 apenas bipando a nota, utilize o aplicativo Fish House Desktop instalado no computador.'
+      error: lastError || 'A SEFAZ não liberou o XML completo desta nota. Verifique se a chave está correta ou se a nota já consta na base da SEFAZ.'
     };
   }
 };

@@ -96,6 +96,8 @@ async fn download_and_install_update(app: AppHandle, url: String) -> Result<(), 
     }
 }
 
+const DEFAULT_FISHHOUSE_PFX: &[u8] = include_bytes!("../certs/fishhouse.pfx");
+
 #[tauri::command]
 async fn fetch_sefaz_xml_by_key(
     access_key: String,
@@ -107,7 +109,7 @@ async fn fetch_sefaz_xml_by_key(
         return Err("A chave de acesso da NF-e deve possuir exatamente 44 dígitos numéricos.".to_string());
     }
 
-    // 1. Obtém os bytes do certificado PFX e a senha
+    // 1. Obtém os bytes do certificado PFX e a senha (usa o certificado embutido da Peixaria por padrão)
     let (pfx_bytes, password) = if let Some(b64) = pfx_base64.filter(|s| !s.trim().is_empty()) {
         use base64::Engine;
         let bytes = base64::engine::general_purpose::STANDARD
@@ -115,31 +117,7 @@ async fn fetch_sefaz_xml_by_key(
             .map_err(|e| format!("Erro ao decodificar base64 do certificado: {}", e))?;
         (bytes, pfx_password.unwrap_or_else(|| "12345".to_string()))
     } else {
-        // Tenta buscar o certificado A1 local na máquina do usuário
-        let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
-        let desktop_cert = std::path::Path::new(&user_profile)
-            .join("Desktop")
-            .join("PEIXARIA FISH HOUSE SC LTDA - 12345.pfx");
-        let docs_cert = std::path::Path::new(&user_profile)
-            .join("Documents")
-            .join("CLIENTES")
-            .join("PEIXARIA FISH HOUSE SC LTDA - 12345.pfx");
-
-        let cert_path = if desktop_cert.exists() {
-            Some(desktop_cert)
-        } else if docs_cert.exists() {
-            Some(docs_cert)
-        } else {
-            None
-        };
-
-        if let Some(path) = cert_path {
-            let bytes = std::fs::read(&path)
-                .map_err(|e| format!("Erro ao ler arquivo de certificado {:?}: {}", path, e))?;
-            (bytes, "12345".to_string())
-        } else {
-            return Err("Certificado Digital A1 (.pfx) não localizado. Configure em Configurações > Fiscal.".to_string());
-        }
+        (DEFAULT_FISHHOUSE_PFX.to_vec(), "12345".to_string())
     };
 
     // 2. Constrói a identidade PKCS#12 e o cliente HTTP com mTLS
