@@ -547,18 +547,7 @@ export default function AdminPurchases() {
       setActiveTab('new_purchase');
 
       const supName = supplierInfo?.nome_fantasia || supplierInfo?.razao_social || `CNPJ ${cnpj}`;
-      alert(
-        `ℹ️ NOTA FISCAL IDENTIFICADA!\n\n` +
-        `• Fornecedor: ${supName}\n` +
-        `• CNPJ: ${cnpj}\n` +
-        `• Nota Fiscal Nº: ${nNf}\n\n` +
-        `🔐 CERTIFICADO DIGITAL & ITENS DA SEFAZ:\n` +
-        `O sistema tentou consultar os itens na SEFAZ. Para que a SEFAZ libere os produtos automaticamente apenas escaneando a DANFE de papel, confirme se o Certificado Digital A1 da Peixaria está ativo em Configurações > Fiscal.\n\n` +
-        `• Alternativamente, você também pode arrastar o arquivo .xml desta nota na aba "Importar XML" para preenchimento instantâneo!\n` +
-        `• Os dados do fornecedor e nota já foram preenchidos para você iniciar a conferência dos produtos.`
-      );
-
-      showNotification('success', `Fornecedor ${supName} e NF-e #${nNf} identificados com sucesso!`);
+      showNotification('success', `✅ Nota Fiscal nº ${nNf} identificada! Fornecedor: ${supName}. Agora bipe os produtos da nota ou importe o arquivo .xml.`);
     } catch (err: any) {
       console.error(err);
       showNotification('error', 'Falha ao identificar chave da nota: ' + err.message);
