@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::Command;
 use tauri::{AppHandle, Emitter};
 use futures_util::StreamExt;
@@ -96,6 +96,132 @@ async fn download_and_install_update(app: AppHandle, url: String) -> Result<(), 
     }
 }
 
+#[tauri::command]
+async fn fetch_sefaz_xml_by_key(
+    access_key: String,
+    pfx_base64: Option<String>,
+    pfx_password: Option<String>,
+) -> Result<String, String> {
+    let clean_key: String = access_key.chars().filter(|c| c.is_ascii_digit()).collect();
+    if clean_key.len() != 44 {
+        return Err("A chave de acesso da NF-e deve possuir exatamente 44 dígitos numéricos.".to_string());
+    }
+
+    // 1. Obtém os bytes do certificado PFX e a senha
+    let (pfx_bytes, password) = if let Some(b64) = pfx_base64.filter(|s| !s.trim().is_empty()) {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64.trim())
+            .map_err(|e| format!("Erro ao decodificar base64 do certificado: {}", e))?;
+        (bytes, pfx_password.unwrap_or_else(|| "12345".to_string()))
+    } else {
+        // Tenta buscar o certificado A1 local na máquina do usuário
+        let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
+        let desktop_cert = std::path::Path::new(&user_profile)
+            .join("Desktop")
+            .join("PEIXARIA FISH HOUSE SC LTDA - 12345.pfx");
+        let docs_cert = std::path::Path::new(&user_profile)
+            .join("Documents")
+            .join("CLIENTES")
+            .join("PEIXARIA FISH HOUSE SC LTDA - 12345.pfx");
+
+        let cert_path = if desktop_cert.exists() {
+            Some(desktop_cert)
+        } else if docs_cert.exists() {
+            Some(docs_cert)
+        } else {
+            None
+        };
+
+        if let Some(path) = cert_path {
+            let bytes = std::fs::read(&path)
+                .map_err(|e| format!("Erro ao ler arquivo de certificado {:?}: {}", path, e))?;
+            (bytes, "12345".to_string())
+        } else {
+            return Err("Certificado Digital A1 (.pfx) não localizado. Configure em Configurações > Fiscal.".to_string());
+        }
+    };
+
+    // 2. Constrói a identidade PKCS#12 e o cliente HTTP com mTLS
+    let identity = reqwest::Identity::from_pkcs12_der(&pfx_bytes, &password)
+        .map_err(|e| format!("Falha ao carregar Certificado Digital A1 (senha incorreta?): {}", e))?;
+
+    let client = reqwest::Client::builder()
+        .identity(identity)
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| format!("Erro ao inicializar cliente SEFAZ: {}", e))?;
+
+    // 3. Monta o envelope SOAP 1.2 com consChNFe da SEFAZ Distribuição DF-e
+    let soap_body = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe">
+      <nfeDadosMsg>
+        <distDFeInt versao="1.01" xmlns="http://www.portalfiscal.inf.br/nfe">
+          <tpAmb>1</tpAmb>
+          <cUFAutor>42</cUFAutor>
+          <CNPJ>63265618000101</CNPJ>
+          <consChNFe>
+            <chNFe>{key}</chNFe>
+          </consChNFe>
+        </distDFeInt>
+      </nfeDadosMsg>
+    </nfeDistDFeInteresse>
+  </soap12:Body>
+</soap12:Envelope>"#,
+        key = clean_key
+    );
+
+    let res = client
+        .post("https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx")
+        .header("Content-Type", "application/soap+xml; charset=utf-8")
+        .body(soap_body)
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao conectar com a SEFAZ: {}", e))?;
+
+    let res_text = res
+        .text()
+        .await
+        .map_err(|e| format!("Erro ao ler resposta da SEFAZ: {}", e))?;
+
+    // 4. Procura pela tag <docZip> com o XML compactado em GZIP
+    if let Some(start_tag) = res_text.find("<docZip") {
+        if let Some(content_start_rel) = res_text[start_tag..].find('>') {
+            let content_start = start_tag + content_start_rel + 1;
+            if let Some(content_end_rel) = res_text[content_start..].find("</docZip>") {
+                let b64_str = res_text[content_start..content_start + content_end_rel].trim();
+
+                use base64::Engine;
+                let gzipped_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64_str)
+                    .map_err(|e| format!("Erro ao decodificar docZip da SEFAZ: {}", e))?;
+
+                use flate2::read::GzDecoder;
+                let mut decoder = GzDecoder::new(&gzipped_bytes[..]);
+                let mut xml_string = String::new();
+                decoder
+                    .read_to_string(&mut xml_string)
+                    .map_err(|e| format!("Erro ao descompactar XML da SEFAZ: {}", e))?;
+
+                return Ok(xml_string);
+            }
+        }
+    }
+
+    // Se a SEFAZ retornou rejeição ou motivo:
+    if let Some(motivo_start) = res_text.find("<xMotivo>") {
+        if let Some(motivo_end) = res_text.find("</xMotivo>") {
+            let motivo = &res_text[motivo_start + 9..motivo_end];
+            return Err(format!("SEFAZ: {}", motivo));
+        }
+    }
+
+    Err("A SEFAZ não retornou o XML para esta chave.".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -111,7 +237,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_url,
-            download_and_install_update
+            download_and_install_update,
+            fetch_sefaz_xml_by_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
