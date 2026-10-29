@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { localDb } from '../services/local/localDb';
+import { sefazService } from '../services/fiscal/sefazService';
 import { motion, AnimatePresence } from 'motion/react';
 import { useScale } from '../services/scale/useScale';
 
@@ -461,9 +462,54 @@ export default function AdminPurchases() {
     }
 
     setIsFetchingKey(true);
-    showNotification('success', 'Consultando dados da chave de acesso na Receita Federal...');
 
     try {
+      // 1. Tenta buscar o XML oficial diretamente na SEFAZ usando o Certificado Digital da empresa
+      showNotification('success', 'Conectando à SEFAZ com o Certificado Digital A1 da Fish House...');
+      const sefazRes = await sefazService.fetchInvoiceXmlByAccessKey(key);
+
+      if (sefazRes.success && sefazRes.xml) {
+        // Sucesso absoluto: XML recebido da SEFAZ! Processa todos os itens e faturas reais
+        const parsed = parseNFXML(sefazRes.xml);
+        setParsedInvoice(parsed);
+
+        const cleanXmlCnpj = parsed.fornecedor.cnpj.replace(/\D/g, '');
+        const matchedSup = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cleanXmlCnpj);
+        const initialMap: Record<string, string> = {};
+
+        if (matchedSup) {
+          const { data: mappings } = await supabase
+            .from('fornecedor_produto_mapeamento')
+            .select('codigo_fornecedor, produto_id')
+            .eq('fornecedor_id', matchedSup.id);
+
+          parsed.itens.forEach(item => {
+            const dbMatch = mappings?.find(m => m.codigo_fornecedor === item.cProd);
+            if (dbMatch) {
+              initialMap[item.cProd] = dbMatch.produto_id;
+              return;
+            }
+            if (item.cEAN && item.cEAN !== 'SEM GTIN' && item.cEAN !== '0') {
+              const eanMatch = products.find(p => p.barcode === item.cEAN);
+              if (eanMatch) initialMap[item.cProd] = eanMatch.id;
+            }
+          });
+        } else {
+          parsed.itens.forEach(item => {
+            if (item.cEAN && item.cEAN !== 'SEM GTIN' && item.cEAN !== '0') {
+              const eanMatch = products.find(p => p.barcode === item.cEAN);
+              if (eanMatch) initialMap[item.cProd] = eanMatch.id;
+            }
+          });
+        }
+
+        setMappedProducts(initialMap);
+        showNotification('success', `⚡ NF-e #${parsed.numero} baixada da SEFAZ via Certificado Digital!`);
+        return;
+      }
+
+      // 2. Se a SEFAZ não liberou o XML ou o certificado não estiver ativo:
+      showNotification('success', 'Buscando dados do fornecedor na Receita Federal...');
       const cnpj = key.substring(6, 20);
       const rawNumber = key.substring(25, 34);
       const nNf = parseInt(rawNumber, 10).toString();
@@ -503,13 +549,13 @@ export default function AdminPurchases() {
       const supName = supplierInfo?.nome_fantasia || supplierInfo?.razao_social || `CNPJ ${cnpj}`;
       alert(
         `ℹ️ NOTA FISCAL IDENTIFICADA!\n\n` +
-        `• Fornecedor Real: ${supName}\n` +
+        `• Fornecedor: ${supName}\n` +
         `• CNPJ: ${cnpj}\n` +
         `• Nota Fiscal Nº: ${nNf}\n\n` +
-        `⚠️ ATENÇÃO SOBRE OS ITENS E VALORES:\n` +
-        `Por exigência fiscal da SEFAZ, o download dos produtos e valores da nota só é liberado mediante o arquivo .xml emitido pelo fornecedor.\n\n` +
-        `• Se você tiver o arquivo .xml enviado pelo fornecedor, arraste-o na aba "Importar XML" para preenchimento 100% automático dos itens e faturas.\n` +
-        `• Ou, adicione os produtos recebidos aqui na ficha com o fornecedor e nota já selecionados!`
+        `🔐 CERTIFICADO DIGITAL & ITENS DA SEFAZ:\n` +
+        `O sistema tentou consultar os itens na SEFAZ. Para que a SEFAZ libere os produtos automaticamente apenas escaneando a DANFE de papel, confirme se o Certificado Digital A1 da Peixaria está ativo em Configurações > Fiscal.\n\n` +
+        `• Alternativamente, você também pode arrastar o arquivo .xml desta nota na aba "Importar XML" para preenchimento instantâneo!\n` +
+        `• Os dados do fornecedor e nota já foram preenchidos para você iniciar a conferência dos produtos.`
       );
 
       showNotification('success', `Fornecedor ${supName} e NF-e #${nNf} identificados com sucesso!`);

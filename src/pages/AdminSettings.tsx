@@ -36,6 +36,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useScale } from '../services/scale/useScale';
 import { localDb } from '../services/local/localDb';
 import { syncEngine } from '../services/local/syncEngine';
+import { sefazService, CertificadoInfo } from '../services/fiscal/sefazService';
 
 type OpeningHour = {
   day: number;
@@ -142,6 +143,7 @@ export default function AdminSettings() {
   useEffect(() => {
     fetchSettings();
     fetchDeliveryZones();
+    sefazService.getCertificateStatus().then(setCertInfo);
   }, []);
 
   // Balança Toledo Prix 3 Plus Hook
@@ -434,6 +436,30 @@ export default function AdminSettings() {
   const fetchDeliveryZones = async () => {
     const { data, error } = await supabase.from('delivery_zones').select('id, neighborhood_name, fee').order('neighborhood_name');
     if (!error && data) setDeliveryZones(data);
+  };
+
+  const handleUploadCertificate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!certFile) {
+      alert('Selecione o arquivo .pfx ou .p12 do Certificado Digital.');
+      return;
+    }
+    if (!certPassword) {
+      alert('Informe a senha do Certificado Digital.');
+      return;
+    }
+
+    setIsUploadingCert(true);
+    const res = await sefazService.saveCertificate(certFile, certPassword);
+    if (res.success && res.info) {
+      setCertInfo(res.info);
+      setCertFile(null);
+      setCertPassword('');
+      alert('✅ ' + res.message);
+    } else {
+      alert('❌ ' + res.message);
+    }
+    setIsUploadingCert(false);
   };
 
   const handleSave = async () => {
@@ -1857,6 +1883,102 @@ export default function AdminSettings() {
                         <option value="producao">Produção (Nota real com valor fiscal)</option>
                       </select>
                     </div>
+                  </div>
+
+                  {/* SEÇÃO DO CERTIFICADO DIGITAL A1 */}
+                  <div className="border-t border-white/10 pt-8 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <ShieldCheck className="w-6 h-6 text-gold-500" />
+                        <div>
+                          <h3 className="text-lg font-bold text-white uppercase tracking-tight">Certificado Digital A1 (.PFX / .P12)</h3>
+                          <p className="text-xs text-gray-400 mt-0.5">Necessário para consultar e baixar Notas Fiscais diretamente da SEFAZ apenas escaneando a DANFE de papel.</p>
+                        </div>
+                      </div>
+                      {certInfo?.hasCertificate && (
+                        <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full text-xs font-black uppercase flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4" /> Certificado Ativo
+                        </span>
+                      )}
+                    </div>
+
+                    {certInfo?.hasCertificate ? (
+                      <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-3xl p-6 space-y-4">
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                          <div>
+                            <p className="text-sm font-bold text-white flex items-center gap-2">
+                              <span>🏢 {certInfo.razaoSocial}</span>
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1">
+                              CNPJ: <strong className="text-white">{certInfo.cnpj}</strong> | Validade até: <strong className="text-emerald-400">{certInfo.validUntil}</strong>
+                            </p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">
+                              Arquivo: {certInfo.filename} (Autenticação mTLS autorizada na SEFAZ)
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm('Deseja realmente substituir o Certificado Digital atual?')) {
+                                sefazService.removeCertificate();
+                                setCertInfo({ hasCertificate: false, status: 'not_configured' });
+                              }
+                            }}
+                            className="text-xs text-red-400 hover:text-red-300 font-bold uppercase tracking-wider bg-red-500/10 hover:bg-red-500/20 px-4 py-2.5 rounded-xl border border-red-500/20 transition-all"
+                          >
+                            Substituir Certificado
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <form onSubmit={handleUploadCertificate} className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
+                        <p className="text-xs text-gray-300 leading-relaxed">
+                          Envie o arquivo do Certificado Digital A1 da Peixaria Fish House (extensão <strong>.pfx</strong> ou <strong>.p12</strong>) e informe a senha para habilitar o escaneamento direto da DANFE física.
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] text-gray-500 font-black uppercase tracking-wider block mb-1.5">Arquivo do Certificado (.pfx / .p12)</label>
+                            <input
+                              type="file"
+                              accept=".pfx,.p12"
+                              ref={certFileInputRef}
+                              onChange={e => setCertFile(e.target.files?.[0] || null)}
+                              className="hidden"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => certFileInputRef.current?.click()}
+                              className="w-full bg-ink-950 border border-white/10 hover:border-gold-500/30 rounded-2xl p-4 text-xs font-bold text-gray-300 flex items-center justify-between"
+                            >
+                              <span className="truncate">{certFile ? certFile.name : 'Selecionar arquivo .pfx / .p12...'}</span>
+                              <CloudUpload className="w-4 h-4 text-gold-500 shrink-0" />
+                            </button>
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-gray-500 font-black uppercase tracking-wider block mb-1.5">Senha do Certificado Digital</label>
+                            <input
+                              type="password"
+                              value={certPassword}
+                              onChange={e => setCertPassword(e.target.value)}
+                              placeholder="Digite a senha do certificado..."
+                              className="w-full bg-ink-950 border border-white/10 rounded-2xl p-4 text-white focus:border-gold-500 outline-none text-xs font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end pt-2">
+                          <button
+                            type="submit"
+                            disabled={!certFile || !certPassword || isUploadingCert}
+                            className="bg-gold-500 hover:bg-gold-600 disabled:opacity-50 text-ink-950 font-black px-6 py-3.5 rounded-2xl text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-gold-500/10 transition-all"
+                          >
+                            {isUploadingCert ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <><ShieldCheck className="w-4 h-4" /> Salvar Certificado Digital</>}
+                          </button>
+                        </div>
+                      </form>
+                    )}
                   </div>
                 </div>
               </motion.div>
