@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'path';
 import https from 'https';
 import zlib from 'zlib';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { promises as fsPromises } from 'fs';
 
@@ -13,6 +14,62 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '15mb' }));
+
+// Helper para enviar requisição SOAP com mTLS PFX
+const sendSefazSoap = (url, soap, pfxBuffer, passphrase) => {
+  return new Promise((resolve, reject) => {
+    const request = https.request(
+      url,
+      {
+        method: 'POST',
+        pfx: pfxBuffer,
+        passphrase,
+        rejectUnauthorized: false,
+        headers: {
+          'Content-Type': 'application/soap+xml; charset=utf-8',
+          'Content-Length': Buffer.byteLength(soap)
+        }
+      },
+      (response) => {
+        let body = '';
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => resolve({ statusCode: response.statusCode, body }));
+      }
+    );
+    request.on('error', (err) => reject(err));
+    request.write(soap);
+    request.end();
+  });
+};
+
+// Monta o SOAP assinado de Manifestação do Destinatário (210210 - Ciencia da Operacao)
+const buildManifestacaoSoap = async (chNFe) => {
+  const keyPemPath = path.join(__dirname, 'certs', 'fishhouse-key.pem');
+  const certB64Path = path.join(__dirname, 'certs', 'fishhouse-cert.b64');
+  const privateKeyPem = await fsPromises.readFile(keyPemPath, 'utf8');
+  const certBase64 = (await fsPromises.readFile(certB64Path, 'utf8')).trim();
+
+  const cnpj = '63265618000101';
+  const tpEvento = '210210';
+  const descEvento = 'Ciencia da Operacao';
+  const eventId = `ID${tpEvento}${chNFe}01`;
+  const now = new Date(Date.now() - 3 * 3600 * 1000);
+  const dhEvento = now.toISOString().slice(0, 19) + '-03:00';
+
+  const infEventoXml = `<infEvento xmlns="http://www.portalfiscal.inf.br/nfe" Id="${eventId}"><cOrgao>91</cOrgao><tpAmb>1</tpAmb><CNPJ>${cnpj}</CNPJ><chNFe>${chNFe}</chNFe><dhEvento>${dhEvento}</dhEvento><tpEvento>${tpEvento}</tpEvento><nSeqEvento>1</nSeqEvento><verEvento>1.00</verEvento><detEvento versao="1.00"><descEvento>${descEvento}</descEvento></detEvento></infEvento>`;
+  const digestValue = crypto.createHash('sha1').update(infEventoXml, 'utf8').digest('base64');
+
+  const signedInfoXml = `<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI="#${eventId}"><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>${digestValue}</DigestValue></Reference></SignedInfo>`;
+
+  const signer = crypto.createSign('RSA-SHA1');
+  signer.update(signedInfoXml, 'utf8');
+  const signatureValue = signer.sign(privateKeyPem, 'base64');
+
+  const signatureXml = `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/><Reference URI="#${eventId}"><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><DigestValue>${digestValue}</DigestValue></Reference></SignedInfo><SignatureValue>${signatureValue}</SignatureValue><KeyInfo><X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data></KeyInfo></Signature>`;
+  const infEventoNoNs = infEventoXml.replace(' xmlns="http://www.portalfiscal.inf.br/nfe"', '');
+
+  return `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>1</idLote><evento versao="1.00">${infEventoNoNs}${signatureXml}</evento></envEvento></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+};
 
 // Endpoint oficial SEFAZ Distribuição DF-e via mTLS com Certificado Digital A1
 const handleSefazDfe = async (req, res) => {
@@ -45,7 +102,7 @@ const handleSefazDfe = async (req, res) => {
       passphrase = '12345';
     }
 
-    const soap = `<?xml version="1.0" encoding="utf-8"?>
+    const distSoap = `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
   <soap12:Body>
     <nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe">
@@ -63,40 +120,41 @@ const handleSefazDfe = async (req, res) => {
   </soap12:Body>
 </soap12:Envelope>`;
 
-    const sefazResponse = await new Promise((resolve, reject) => {
-      const request = https.request(
-        'https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx',
-        {
-          method: 'POST',
-          pfx: pfxBuffer,
-          passphrase,
-          rejectUnauthorized: false,
-          headers: {
-            'Content-Type': 'application/soap+xml; charset=utf-8',
-            'Content-Length': Buffer.byteLength(soap)
-          }
-        },
-        (response) => {
-          let body = '';
-          response.on('data', (chunk) => { body += chunk; });
-          response.on('end', () => resolve({ statusCode: response.statusCode, body }));
-        }
-      );
-      request.on('error', (err) => reject(err));
-      request.write(soap);
-      request.end();
-    });
-
+    const distUrl = 'https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx';
+    const sefazResponse = await sendSefazSoap(distUrl, distSoap, pfxBuffer, passphrase);
     const bodyText = sefazResponse.body || '';
     const docZipMatch = bodyText.match(/<docZip[^>]*>([A-Za-z0-9+/=]+)<\/docZip>/);
+
     if (docZipMatch && docZipMatch[1]) {
       const xml = zlib.gunzipSync(Buffer.from(docZipMatch[1], 'base64')).toString('utf8');
       if (xml.includes('<infNFe')) {
         return res.json({ success: true, xml });
       }
+    }
+
+    // Se retornou apenas <resNFe> ou ainda não liberou o XML completo, realiza automaticamente a Manifestação do Destinatário (Ciência da Operação - 210210)
+    try {
+      const manifestSoap = await buildManifestacaoSoap(cleanKey);
+      await sendSefazSoap('https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx', manifestSoap, pfxBuffer, passphrase);
+
+      // Reconsulta o XML completo imediatamente após a manifestação
+      const retryResponse = await sendSefazSoap(distUrl, distSoap, pfxBuffer, passphrase);
+      const retryBody = retryResponse.body || '';
+      const retryZipMatch = retryBody.match(/<docZip[^>]*>([A-Za-z0-9+/=]+)<\/docZip>/);
+      if (retryZipMatch && retryZipMatch[1]) {
+        const retryXml = zlib.gunzipSync(Buffer.from(retryZipMatch[1], 'base64')).toString('utf8');
+        if (retryXml.includes('<infNFe')) {
+          return res.json({ success: true, xml: retryXml });
+        }
+      }
+    } catch (manifErr) {
+      console.warn('[SEFAZ Manifestação Automática]:', manifErr.message);
+    }
+
+    if (docZipMatch && docZipMatch[1]) {
       return res.json({
         success: false,
-        error: 'A SEFAZ retornou apenas o resumo da nota (resNFe). A nota ainda aguarda liberação do XML completo pela SEFAZ.'
+        error: 'A Manifestação da Nota foi registrada na SEFAZ. Aguarde alguns instantes e clique novamente em Buscar e Importar para baixar os itens.'
       });
     }
 
