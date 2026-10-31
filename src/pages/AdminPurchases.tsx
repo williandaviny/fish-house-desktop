@@ -117,6 +117,8 @@ export default function AdminPurchases() {
       uCom: string;
       vUnCom: number;
       vProd: number;
+      ncm?: string;
+      cfop?: string;
     }>;
     duplicatas: Array<{
       numero: string;
@@ -135,9 +137,12 @@ export default function AdminPurchases() {
     unit: 'un',
     custo_medio: 0,
     price: 0,
+    ncm: '03028990',
+    cfop: '5102',
     xmlItemRef: null as any
   });
   const [isSavingNewProduct, setIsSavingNewProduct] = useState(false);
+  const [isBatchCreatingProducts, setIsBatchCreatingProducts] = useState(false);
 
   const availableCategories = [
     '🐟 Peixes', 
@@ -153,22 +158,73 @@ export default function AdminPurchases() {
     '🍤 Empanados'
   ];
 
-  const handleOpenCreateProductModal = (params: { name?: string; barcode?: string; unit?: string; cost?: number; xmlItem?: any }) => {
-    const rawCost = params.cost || 0;
+  const guessCategoryFromName = (rawName: string): string => {
+    const n = (rawName || '').toUpperCase();
+    if (n.includes('CAMARAO') || n.includes('CAMARÃO')) return '🦐 Camarões';
+    if (n.includes('LULA') || n.includes('POLVO') || n.includes('OSTRA') || n.includes('MARISCO') || n.includes('MEXILHAO') || n.includes('MEXILHÃO') || n.includes('VIEIRA') || n.includes('SIRI') || n.includes('CARANGUEJO')) return '🦀 Frutos do Mar';
+    if (n.includes('MOLHO') || n.includes('SHOYU') || n.includes('TARE') || n.includes('TARÊ') || n.includes('AZEITE') || n.includes('MAIONESE') || n.includes('KETCHUP')) return '🥫 Molhos';
+    if (n.includes('ARROZ') || n.includes('FARINHA') || n.includes('PANKO') || n.includes('FEIJAO') || n.includes('GRÃO')) return '🌾 Farinhas & Grãos';
+    if (n.includes('SUCO') || n.includes('REFRIGERANTE') || n.includes('AGUA') || n.includes('ÁGUA') || n.includes('CERVEJA') || n.includes('VINHO') || n.includes('BEBIDA')) return '🍷 Bebidas';
+    if (n.includes('BATATA') || n.includes('ACUCAR') || n.includes('AÇÚCAR') || n.includes('LEITE') || n.includes('CREME') || n.includes('MANTEIGA') || n.includes('QUEIJO')) return '🍽️ Acompanhamentos';
+    if (n.includes('TEMPERO') || n.includes('SAL ') || n.includes('PIMENTA') || n.includes('ALHO') || n.includes('ERVA')) return '🧂 Especiarias & Temperos';
+    if (n.includes('EMPANADO') || n.includes('BOLINHO') || n.includes('ISCA')) return '🍤 Empanados';
+    return '🐟 Peixes';
+  };
+
+  const normalizeProductUnit = (rawUnit?: string): string => {
+    const u = (rawUnit || 'un').toLowerCase().trim();
+    if (u.startsWith('kg') || u === 'kilo' || u === 'quilograma') return 'kg';
+    return 'un';
+  };
+
+  const handleOpenCreateProductModal = (params: { name?: string; barcode?: string; unit?: string; cost?: number; ncm?: string; xmlItem?: any }) => {
+    const rawCost = Number(params.cost) || 0;
     const suggestedPrice = rawCost > 0 ? Number((rawCost * 1.4).toFixed(2)) : 0;
-    let unit = (params.unit || 'un').toLowerCase();
-    if (unit !== 'kg' && unit !== 'un') unit = 'un';
+    const unit = normalizeProductUnit(params.unit);
+    const cleanEan = params.barcode && params.barcode !== 'SEM GTIN' && params.barcode !== '0' ? params.barcode.trim() : '';
 
     setNewProductForm({
       name: params.name || '',
-      barcode: params.barcode || '',
-      category: '🐟 Peixes',
-      unit: unit,
+      barcode: cleanEan,
+      category: guessCategoryFromName(params.name || ''),
+      unit,
       custo_medio: rawCost,
       price: suggestedPrice,
+      ncm: params.ncm || params.xmlItem?.ncm || '03028990',
+      cfop: '5102',
       xmlItemRef: params.xmlItem || null
     });
     setIsNewProductModalOpen(true);
+  };
+
+  const insertProductResilient = async (payload: Record<string, any>) => {
+    const { data, error } = await supabase
+      .from('products')
+      .insert([payload])
+      .select()
+      .single();
+
+    if (!error && data) return data;
+
+    // Fallback enxuto caso alguma coluna opcional dê conflito de schema
+    const minimalPayload = {
+      name: payload.name,
+      category: payload.category || '🐟 Peixes',
+      unit: payload.unit || 'un',
+      barcode: payload.barcode || null,
+      custo_medio: payload.custo_medio || 0,
+      price: payload.price || payload.custo_medio || 0,
+      stock: 0,
+      is_available: true
+    };
+    const retry = await supabase
+      .from('products')
+      .insert([minimalPayload])
+      .select()
+      .single();
+
+    if (retry.error) throw retry.error;
+    return retry.data;
   };
 
   const handleSaveNewProduct = async (e: React.FormEvent) => {
@@ -180,29 +236,28 @@ export default function AdminPurchases() {
 
     setIsSavingNewProduct(true);
     try {
+      const costVal = Number(newProductForm.custo_medio) || 0;
+      const priceVal = Number(newProductForm.price) || (costVal > 0 ? Number((costVal * 1.4).toFixed(2)) : 0);
+
       const productPayload = {
         name: newProductForm.name.trim(),
         category: newProductForm.category,
         unit: newProductForm.unit,
         barcode: newProductForm.barcode.trim() || null,
-        custo_medio: Number(newProductForm.custo_medio) || 0,
-        price: Number(newProductForm.price) || Number(newProductForm.custo_medio) || 0,
+        custo_medio: costVal,
+        price: priceVal,
+        ncm: (newProductForm.ncm || '03028990').replace(/\D/g, '') || '03028990',
+        cfop: (newProductForm.cfop || '5102').replace(/\D/g, '') || '5102',
         stock: 0,
         is_available: true,
         is_deleted: false
       };
 
-      const { data, error } = await supabase
-        .from('products')
-        .insert([productPayload])
-        .select()
-        .single();
-
-      if (error) throw error;
+      const data = await insertProductResilient(productPayload);
 
       // Salva no localDb e adiciona à lista
       localDb.saveProduct(data, false);
-      setProducts(prev => [...prev, data].sort((a,b) => a.name.localeCompare(b.name)));
+      setProducts(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
 
       if (newProductForm.xmlItemRef) {
         setMappedProducts(prev => ({
@@ -229,6 +284,56 @@ export default function AdminPurchases() {
       showNotification('error', 'Erro ao cadastrar produto: ' + err.message);
     } finally {
       setIsSavingNewProduct(false);
+    }
+  };
+
+  // Cadastro em lote de todos os produtos não vinculados da NF-e
+  const handleBatchCreateUnmappedProducts = async () => {
+    if (!parsedInvoice) return;
+    const unmappedItems = parsedInvoice.itens.filter(item => !mappedProducts[item.cProd]);
+    if (unmappedItems.length === 0) return;
+
+    setIsBatchCreatingProducts(true);
+    try {
+      const createdProducts: Product[] = [];
+      const newMappings: Record<string, string> = {};
+
+      for (const item of unmappedItems) {
+        // Verifica se já criamos um produto com mesmo cProd/xProd neste lote
+        if (newMappings[item.cProd]) continue;
+
+        const cleanEan = item.cEAN && item.cEAN !== 'SEM GTIN' && item.cEAN !== '0' ? item.cEAN.trim() : null;
+        const rawCost = Number(item.vUnCom) || 0;
+        const suggestedPrice = rawCost > 0 ? Number((rawCost * 1.4).toFixed(2)) : 0;
+
+        const payload = {
+          name: item.xProd.trim(),
+          category: guessCategoryFromName(item.xProd),
+          unit: normalizeProductUnit(item.uCom),
+          barcode: cleanEan,
+          custo_medio: rawCost,
+          price: suggestedPrice,
+          ncm: (item.ncm || '03028990').replace(/\D/g, '') || '03028990',
+          cfop: '5102',
+          stock: 0,
+          is_available: true,
+          is_deleted: false
+        };
+
+        const saved = await insertProductResilient(payload);
+        localDb.saveProduct(saved, false);
+        createdProducts.push(saved);
+        newMappings[item.cProd] = saved.id;
+      }
+
+      setProducts(prev => [...prev, ...createdProducts].sort((a, b) => a.name.localeCompare(b.name)));
+      setMappedProducts(prev => ({ ...prev, ...newMappings }));
+      showNotification('success', `⚡ ${createdProducts.length} produto(s) novo(s) cadastrado(s) e vinculado(s) à nota automaticamente!`);
+    } catch (err: any) {
+      console.error(err);
+      showNotification('error', 'Erro ao cadastrar produtos da nota: ' + err.message);
+    } finally {
+      setIsBatchCreatingProducts(false);
     }
   };
 
@@ -518,15 +623,25 @@ export default function AdminPurchases() {
             }
             if (item.cEAN && item.cEAN !== 'SEM GTIN' && item.cEAN !== '0') {
               const eanMatch = products.find(p => p.barcode === item.cEAN);
-              if (eanMatch) initialMap[item.cProd] = eanMatch.id;
+              if (eanMatch) {
+                initialMap[item.cProd] = eanMatch.id;
+                return;
+              }
             }
+            const nameMatch = products.find(p => p.name.trim().toLowerCase() === item.xProd.trim().toLowerCase());
+            if (nameMatch) initialMap[item.cProd] = nameMatch.id;
           });
         } else {
           parsed.itens.forEach(item => {
             if (item.cEAN && item.cEAN !== 'SEM GTIN' && item.cEAN !== '0') {
               const eanMatch = products.find(p => p.barcode === item.cEAN);
-              if (eanMatch) initialMap[item.cProd] = eanMatch.id;
+              if (eanMatch) {
+                initialMap[item.cProd] = eanMatch.id;
+                return;
+              }
             }
+            const nameMatch = products.find(p => p.name.trim().toLowerCase() === item.xProd.trim().toLowerCase());
+            if (nameMatch) initialMap[item.cProd] = nameMatch.id;
           });
         }
 
@@ -549,11 +664,11 @@ export default function AdminPurchases() {
   const fetchInitialData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch products (now including barcode, custo_medio, price, plu_codigo)
+      // 1. Fetch products (including barcode, custo_medio, price, plu_codigo)
       const { data: prods } = await supabase
         .from('products')
         .select('id, name, unit, barcode, custo_medio, price, plu_codigo')
-        .eq('is_available', true)
+        .or('is_deleted.is.null,is_deleted.eq.false')
         .order('name');
       setProducts(prods || []);
 
@@ -842,7 +957,9 @@ export default function AdminPurchases() {
           qCom: Number(getTagText(prodTag, 'qCom') || '0'),
           uCom: getTagText(prodTag, 'uCom'),
           vUnCom: Number(getTagText(prodTag, 'vUnCom') || '0'),
-          vProd: Number(getTagText(prodTag, 'vProd') || '0')
+          vProd: Number(getTagText(prodTag, 'vProd') || '0'),
+          ncm: getTagText(prodTag, 'NCM') || '03028990',
+          cfop: getTagText(prodTag, 'CFOP') || '5102'
         });
       }
     }
@@ -919,15 +1036,25 @@ export default function AdminPurchases() {
               return;
             }
           }
+          // 3. Try exact name matching
+          const nameMatch = products.find(p => p.name.trim().toLowerCase() === item.xProd.trim().toLowerCase());
+          if (nameMatch) {
+            initialMap[item.cProd] = nameMatch.id;
+          }
         });
       } else {
-        // Just match by EAN since supplier doesn't exist yet
+        // Match by EAN or exact name since supplier doesn't exist yet
         parsed.itens.forEach(item => {
           if (item.cEAN && item.cEAN !== 'SEM GTIN' && item.cEAN !== '0') {
             const eanMatch = products.find(p => p.barcode === item.cEAN);
             if (eanMatch) {
               initialMap[item.cProd] = eanMatch.id;
+              return;
             }
+          }
+          const nameMatch = products.find(p => p.name.trim().toLowerCase() === item.xProd.trim().toLowerCase());
+          if (nameMatch) {
+            initialMap[item.cProd] = nameMatch.id;
           }
         });
       }
@@ -986,15 +1113,32 @@ export default function AdminPurchases() {
       return;
     }
 
-    const cleanXmlCnpj = parsedInvoice.fornecedor.cnpj.replace(/\D/g, '');
-    const supplierObj = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cleanXmlCnpj);
-    if (!supplierObj) {
-      showNotification('error', 'Cadastre o fornecedor antes de confirmar a importação da nota.');
-      return;
-    }
-
     setIsImportingXml(true);
     try {
+      const cleanXmlCnpj = parsedInvoice.fornecedor.cnpj.replace(/\D/g, '');
+      let supplierObj = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cleanXmlCnpj);
+
+      // Se o fornecedor ainda não estiver cadastrado, cadastra automaticamente
+      if (!supplierObj) {
+        const { data: createdSup, error: supErr } = await supabase
+          .from('fornecedores')
+          .insert([{
+            cnpj_cpf: parsedInvoice.fornecedor.cnpj,
+            razao_social: parsedInvoice.fornecedor.razaoSocial,
+            nome_fantasia: parsedInvoice.fornecedor.nomeFantasia || parsedInvoice.fornecedor.razaoSocial,
+            inscricao_estadual: parsedInvoice.fornecedor.ie || null,
+            telefone: parsedInvoice.fornecedor.telefone || null,
+            email: parsedInvoice.fornecedor.email || null,
+            endereco: parsedInvoice.fornecedor.endereco || null
+          }])
+          .select()
+          .single();
+
+        if (supErr) throw supErr;
+        supplierObj = createdSup;
+        setSuppliers(prev => [...prev, createdSup].sort((a, b) => a.razao_social.localeCompare(b.razao_social)));
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
 
       // 1. Save new mappings in public.fornecedor_produto_mapeamento
@@ -1017,6 +1161,11 @@ export default function AdminPurchases() {
               codigo_fornecedor: item.cProd,
               produto_id: targetProdId
             });
+        } else {
+          await supabase
+            .from('fornecedor_produto_mapeamento')
+            .update({ produto_id: targetProdId })
+            .eq('id', existingMap.id);
         }
       }
 
@@ -1554,7 +1703,17 @@ export default function AdminPurchases() {
 
                 {/* Products Quick Selector */}
                 <div className="bg-ink-900 border border-white/10 rounded-3xl p-6 shadow-xl space-y-4">
-                  <h3 className="text-sm font-display font-bold text-white">Adicionar Produtos</h3>
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-display font-bold text-white">Adicionar Produtos</h3>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCreateProductModal({})}
+                      className="px-3 py-1.5 bg-gold-500/10 hover:bg-gold-500/20 text-gold-500 border border-gold-500/20 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all"
+                      title="Cadastrar Novo Produto"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Novo Produto
+                    </button>
+                  </div>
                   <div className="max-h-64 overflow-y-auto pr-1 space-y-2 custom-scrollbar">
                     {products.map(p => {
                       const added = purchaseItems.some(i => i.produto_id === p.id);
@@ -1772,9 +1931,44 @@ export default function AdminPurchases() {
 
                   {/* XML Items Mapping Table */}
                   <div className="space-y-4">
-                    <h4 className="text-sm font-display font-bold text-white uppercase tracking-wider">
-                      Mapeamento de Produtos da Nota
-                    </h4>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h4 className="text-sm font-display font-bold text-white uppercase tracking-wider">
+                          Mapeamento de Produtos da Nota
+                        </h4>
+                        <p className="text-[11px] text-gray-400 mt-0.5">
+                          Associe cada item da nota a um produto existente ou clique em <strong className="text-gold-500">+ Novo</strong> para cadastrar na hora.
+                        </p>
+                      </div>
+
+                      {(() => {
+                        const unmappedCount = parsedInvoice.itens.filter(i => !mappedProducts[i.cProd]).length;
+                        if (unmappedCount > 0) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={handleBatchCreateUnmappedProducts}
+                              disabled={isBatchCreatingProducts}
+                              className="bg-gold-500/15 hover:bg-gold-500/25 text-gold-500 border border-gold-500/30 font-black uppercase tracking-wider text-[10px] px-4 py-2.5 rounded-xl transition-all flex items-center gap-1.5 self-start sm:self-auto shrink-0 shadow-lg shadow-gold-500/5"
+                            >
+                              {isBatchCreatingProducts ? (
+                                <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <>
+                                  <Plus className="w-4 h-4" />
+                                  ⚡ Cadastrar Todos os Produtos Novos ({unmappedCount})
+                                </>
+                              )}
+                            </button>
+                          );
+                        }
+                        return (
+                          <span className="text-[10px] font-black uppercase tracking-wider text-green-400 bg-green-500/10 border border-green-500/20 px-3 py-1.5 rounded-xl flex items-center gap-1.5 self-start sm:self-auto">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Todos os itens vinculados
+                          </span>
+                        );
+                      })()}
+                    </div>
                     
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-xs border-collapse">
@@ -1841,12 +2035,13 @@ export default function AdminPurchases() {
                                           barcode: item.cEAN && item.cEAN !== 'SEM GTIN' ? item.cEAN : '',
                                           unit: item.uCom,
                                           cost: item.vUnCom,
+                                          ncm: item.ncm,
                                           xmlItem: item
                                         })}
-                                        className="p-2 bg-gold-500/10 hover:bg-gold-500/20 text-gold-500 border border-gold-500/20 rounded-xl transition-all shrink-0"
+                                        className="px-3 py-2 bg-gold-500/15 hover:bg-gold-500/25 text-gold-500 border border-gold-500/30 rounded-xl transition-all shrink-0 flex items-center gap-1 text-[10px] font-black uppercase tracking-wider"
                                         title="Cadastrar como Novo Produto"
                                       >
-                                        <Plus className="w-4 h-4" />
+                                        <Plus className="w-3.5 h-3.5" /> Novo
                                       </button>
                                     </div>
                                     {internalId ? (
@@ -2217,6 +2412,160 @@ export default function AdminPurchases() {
                       'Salvar Alterações'
                     ) : (
                       'Cadastrar Fornecedor'
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* CREATE NEW PRODUCT MODAL (FROM XML OR PURCHASE) */}
+      <AnimatePresence>
+        {isNewProductModalOpen && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+            <div onClick={() => setIsNewProductModalOpen(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-lg bg-ink-900 border border-white/10 rounded-[2.5rem] p-6 shadow-2xl overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
+                <div>
+                  <h3 className="text-lg font-display font-black text-white uppercase tracking-tight">
+                    Cadastrar Novo Produto
+                  </h3>
+                  {newProductForm.xmlItemRef && (
+                    <p className="text-[11px] text-gold-500 font-bold mt-0.5">
+                      Vinculando ao item Cód. {newProductForm.xmlItemRef.cProd} da Nota Fiscal
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsNewProductModalOpen(false)}
+                  className="text-gray-400 hover:text-white text-xs uppercase font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveNewProduct} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest ml-1">Nome do Produto *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Filé de Salmão Fresco"
+                    value={newProductForm.name}
+                    onChange={e => setNewProductForm({ ...newProductForm, name: e.target.value })}
+                    className="w-full bg-ink-950 border border-white/10 rounded-xl py-2.5 px-4 text-xs font-bold text-white focus:outline-none focus:border-gold-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest ml-1">Categoria *</label>
+                    <select
+                      value={newProductForm.category}
+                      onChange={e => setNewProductForm({ ...newProductForm, category: e.target.value })}
+                      className="w-full bg-ink-950 border border-white/10 rounded-xl py-2.5 px-4 text-xs font-bold text-white focus:outline-none focus:border-gold-500 cursor-pointer"
+                      style={{ colorScheme: 'dark' }}
+                    >
+                      {availableCategories.map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest ml-1">Unidade de Medida *</label>
+                    <select
+                      value={newProductForm.unit}
+                      onChange={e => setNewProductForm({ ...newProductForm, unit: e.target.value })}
+                      className="w-full bg-ink-950 border border-white/10 rounded-xl py-2.5 px-4 text-xs font-bold text-white focus:outline-none focus:border-gold-500 cursor-pointer"
+                      style={{ colorScheme: 'dark' }}
+                    >
+                      <option value="un">Unidade (un)</option>
+                      <option value="kg">Quilograma (kg)</option>
+                      <option value="pacote">Pacote</option>
+                      <option value="bandeja">Bandeja</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest ml-1">Código de Barras (EAN)</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: 7891234567890"
+                      value={newProductForm.barcode}
+                      onChange={e => setNewProductForm({ ...newProductForm, barcode: e.target.value })}
+                      className="w-full bg-ink-950 border border-white/10 rounded-xl py-2.5 px-4 text-xs font-mono text-white focus:outline-none focus:border-gold-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest ml-1">NCM Fiscal</label>
+                    <input
+                      type="text"
+                      placeholder="03028990"
+                      value={newProductForm.ncm}
+                      onChange={e => setNewProductForm({ ...newProductForm, ncm: e.target.value })}
+                      className="w-full bg-ink-950 border border-white/10 rounded-xl py-2.5 px-4 text-xs font-mono text-white focus:outline-none focus:border-gold-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest ml-1">Custo Unitário (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={newProductForm.custo_medio}
+                      onChange={e => setNewProductForm({ ...newProductForm, custo_medio: Number(e.target.value) })}
+                      className="w-full bg-ink-950 border border-white/10 rounded-xl py-2.5 px-4 text-xs font-mono font-bold text-white focus:outline-none focus:border-gold-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-gold-500 uppercase font-black tracking-widest ml-1">Preço de Venda PDV (R$) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      required
+                      value={newProductForm.price}
+                      onChange={e => setNewProductForm({ ...newProductForm, price: Number(e.target.value) })}
+                      className="w-full bg-ink-950 border border-gold-500/30 rounded-xl py-2.5 px-4 text-xs font-mono font-bold text-gold-500 focus:outline-none focus:border-gold-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setIsNewProductModalOpen(false)}
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 font-bold py-3 rounded-xl uppercase tracking-wider text-xs border border-white/10"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingNewProduct}
+                    className="flex-1 bg-gold-500 hover:bg-gold-600 text-ink-950 font-black py-3 rounded-xl uppercase tracking-wider text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-gold-500/10"
+                  >
+                    {isSavingNewProduct ? (
+                      <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
+                    ) : newProductForm.xmlItemRef ? (
+                      'Salvar e Vincular à Nota'
+                    ) : (
+                      'Cadastrar Produto'
                     )}
                   </button>
                 </div>
