@@ -138,6 +138,10 @@ export default function AdminFinancial() {
     vencimento: new Date().toISOString().split('T')[0],
     empresa_id: '',
     fornecedor_id: '',
+    is_parcelado: false,
+    qtd_parcelas: 2,
+    tipo_divisao: 'total' as 'total' | 'por_parcela',
+    intervalo: 'mensal' as 'mensal' | 'quinzenal' | 'semanal'
   });
 
   const [newReceivable, setNewReceivable] = useState({
@@ -541,34 +545,74 @@ export default function AdminFinancial() {
     }
   };
 
-  // Save Manual Payable
+  // Save Manual Payable (suporta parcela única ou múltiplas parcelas com cálculo automático de vencimentos)
   const handleSavePayable = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPayable.descricao || !newPayable.valor || !newPayable.empresa_id) return;
 
     setIsSavingPayable(true);
     try {
-      const { error } = await supabase
-        .from('contas_pagar')
-        .insert([{
-          descricao: newPayable.descricao,
+      const rawValor = Number(newPayable.valor);
+      const parcelasQtd = newPayable.is_parcelado ? Math.max(2, Math.min(60, Number(newPayable.qtd_parcelas) || 2)) : 1;
+      
+      const valorPorParcela = newPayable.is_parcelado
+        ? (newPayable.tipo_divisao === 'total' ? Number((rawValor / parcelasQtd).toFixed(2)) : rawValor)
+        : rawValor;
+
+      const itemsToInsert = [];
+      const [ano, mes, dia] = newPayable.vencimento.split('-').map(Number);
+
+      for (let i = 0; i < parcelasQtd; i++) {
+        let dueDate: Date;
+        if (newPayable.intervalo === 'quinzenal') {
+          dueDate = new Date(ano, mes - 1, dia + (i * 15));
+        } else if (newPayable.intervalo === 'semanal') {
+          dueDate = new Date(ano, mes - 1, dia + (i * 7));
+        } else {
+          // Mensal mantendo o dia base do mês (com ajuste para meses mais curtos)
+          dueDate = new Date(ano, (mes - 1) + i, dia);
+          // Se o mês estourou (ex: dia 31 em fevereiro), ajusta para o último dia válido
+          if (dueDate.getDate() !== dia && dia > 28) {
+            dueDate = new Date(ano, (mes - 1) + i + 1, 0);
+          }
+        }
+
+        const dateStr = dueDate.toISOString().split('T')[0];
+        const descFinal = parcelasQtd > 1
+          ? `${newPayable.descricao.trim()} (${i + 1}/${parcelasQtd})`
+          : newPayable.descricao.trim();
+
+        itemsToInsert.push({
+          descricao: descFinal,
           categoria: newPayable.categoria,
-          valor: Number(newPayable.valor),
-          vencimento: newPayable.vencimento,
+          valor: valorPorParcela,
+          vencimento: dateStr,
           empresa_id: newPayable.empresa_id,
           fornecedor_id: newPayable.fornecedor_id || null,
           status: 'pendente'
-        }]);
+        });
+      }
+
+      const { error } = await supabase
+        .from('contas_pagar')
+        .insert(itemsToInsert);
 
       if (error) throw error;
       
-      showNotification('success', 'Conta a Pagar cadastrada com sucesso!');
+      showNotification(
+        'success', 
+        parcelasQtd > 1 
+          ? `Lançamento parcelado em ${parcelasQtd}x de R$ ${valorPorParcela.toFixed(2)} cadastrado com sucesso!`
+          : 'Conta a Pagar cadastrada com sucesso!'
+      );
       setIsPayableModalOpen(false);
       setNewPayable(prev => ({
         ...prev,
         descricao: '',
         valor: '',
-        fornecedor_id: ''
+        fornecedor_id: '',
+        is_parcelado: false,
+        qtd_parcelas: 2
       }));
 
       await fetchFinancialRecords();
@@ -1949,6 +1993,97 @@ export default function AdminFinancial() {
                       <option key={s.id} value={s.id}>{s.nome_fantasia || s.razao_social}</option>
                     ))}
                   </select>
+                </div>
+
+                {/* Bloco de Parcelamento / Despesa Recorrente Parcelada */}
+                <div className="pt-2 border-t border-white/5 space-y-3">
+                  <div className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/5">
+                    <div>
+                      <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Repeat className="w-3.5 h-3.5 text-gold-500" />
+                        Despesa Parcelada?
+                      </p>
+                      <p className="text-[10px] text-gray-400">Gerar múltiplas parcelas com vencimentos futuros</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={newPayable.is_parcelado} 
+                        onChange={e => setNewPayable({ ...newPayable, is_parcelado: e.target.checked })}
+                        className="sr-only peer" 
+                      />
+                      <div className="w-11 h-6 bg-ink-950 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gold-500"></div>
+                    </label>
+                  </div>
+
+                  {newPayable.is_parcelado && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="space-y-3 p-3.5 bg-ink-950/80 rounded-2xl border border-gold-500/20"
+                    >
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-gray-400 uppercase font-black tracking-widest ml-1">Nº de Parcelas</label>
+                          <input
+                            type="number"
+                            min="2"
+                            max="60"
+                            required={newPayable.is_parcelado}
+                            value={newPayable.qtd_parcelas}
+                            onChange={e => setNewPayable({ ...newPayable, qtd_parcelas: Math.max(2, parseInt(e.target.value) || 2) })}
+                            className="w-full bg-ink-900 border border-white/10 rounded-xl py-2 px-3 text-xs font-bold text-white focus:outline-none focus:border-gold-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-gray-400 uppercase font-black tracking-widest ml-1">Intervalo</label>
+                          <select
+                            value={newPayable.intervalo}
+                            onChange={e => setNewPayable({ ...newPayable, intervalo: e.target.value as any })}
+                            className="w-full bg-ink-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none"
+                          >
+                            <option value="mensal">Mensal (30 dias)</option>
+                            <option value="quinzenal">Quinzenal (15 dias)</option>
+                            <option value="semanal">Semanal (7 dias)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-gray-400 uppercase font-black tracking-widest ml-1">O valor informado acima é:</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setNewPayable({ ...newPayable, tipo_divisao: 'total' })}
+                            className={`py-2 px-2.5 rounded-xl text-[10px] font-black uppercase transition-all border ${
+                              newPayable.tipo_divisao === 'total'
+                                ? 'bg-gold-500/20 border-gold-500 text-gold-500'
+                                : 'bg-ink-900 border-white/5 text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            Valor Total ({newPayable.qtd_parcelas}x de R$ {(Number(newPayable.valor || 0) / newPayable.qtd_parcelas).toFixed(2)})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNewPayable({ ...newPayable, tipo_divisao: 'por_parcela' })}
+                            className={`py-2 px-2.5 rounded-xl text-[10px] font-black uppercase transition-all border ${
+                              newPayable.tipo_divisao === 'por_parcela'
+                                ? 'bg-gold-500/20 border-gold-500 text-gold-500'
+                                : 'bg-ink-900 border-white/5 text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            Por Parcela (Total R$ {(Number(newPayable.valor || 0) * newPayable.qtd_parcelas).toFixed(2)})
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="p-2.5 bg-gold-500/10 border border-gold-500/20 rounded-xl text-[11px] text-gold-400 leading-relaxed">
+                        💡 Serão gerados <strong>{newPayable.qtd_parcelas} títulos</strong> no Contas a Pagar: <em>"{newPayable.descricao || 'Despesa'} (1/{newPayable.qtd_parcelas})"</em> até <em>"({newPayable.qtd_parcelas}/{newPayable.qtd_parcelas})"</em> com vencimentos calculados a cada {newPayable.intervalo === 'mensal' ? 'mês' : newPayable.intervalo === 'quinzenal' ? '15 dias' : 'semana'}.
+                      </div>
+                    </motion.div>
+                  )}
                 </div>
 
                 <div className="flex gap-3 pt-4">
