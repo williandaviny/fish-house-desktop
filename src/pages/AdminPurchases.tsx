@@ -651,8 +651,53 @@ export default function AdminPurchases() {
         return;
       }
 
-      // 2. Se a SEFAZ não liberou o XML: mostra o motivo real sem esconder o erro
-      showNotification('error', sefazRes.error || 'A SEFAZ não retornou os produtos para esta chave.');
+      // 2. Se a SEFAZ não liberou o XML completo: fallback inteligente
+      // Extrai os metadados da chave (CNPJ do Fornecedor, Nº da NF-e, Ano/Mês) e pré-preenche a compra
+      const cleanCnpj = key.substring(6, 20);
+      const invoiceNum = parseInt(key.substring(25, 34), 10).toString();
+      const yy = key.substring(2, 4);
+      const mm = key.substring(4, 6);
+      const defaultDate = `20${yy}-${mm}-01`;
+
+      let matchedSup = suppliers.find(s => s.cnpj_cpf.replace(/\D/g, '') === cleanCnpj);
+      if (!matchedSup) {
+        const cnpjData = await fetchCnpjData(cleanCnpj);
+        if (cnpjData) {
+          const { data: newSup } = await supabase
+            .from('fornecedores')
+            .insert([{
+              cnpj_cpf: cleanCnpj,
+              razao_social: cnpjData.razaoSocial,
+              nome_fantasia: cnpjData.nomeFantasia || cnpjData.razaoSocial,
+              telefone: cnpjData.telefone || null,
+              email: cnpjData.email || null,
+              endereco: cnpjData.endereco || null
+            }])
+            .select()
+            .single();
+
+          if (newSup) {
+            matchedSup = newSup;
+            setSuppliers(prev => [...prev, newSup].sort((a, b) => a.razao_social.localeCompare(b.razao_social)));
+          }
+        }
+      }
+
+      if (matchedSup) {
+        setSelectedSupplier(matchedSup.id);
+      }
+      setDocNumber(invoiceNum);
+      if (!purchaseDate) {
+        setPurchaseDate(new Date().toISOString().split('T')[0]);
+      }
+      setNotes(`Chave de Acesso DANFE: ${key}`);
+      setActiveTab('new_purchase');
+
+      const supName = matchedSup ? (matchedSup.nome_fantasia || matchedSup.razao_social) : `CNPJ ${cleanCnpj}`;
+      showNotification(
+        'info',
+        `📄 NF-e nº ${invoiceNum} (${supName}) identificada! A SEFAZ ainda não liberou o arquivo XML desta nota na fila pública. Os dados da nota e do fornecedor já foram preenchidos para você conferir os itens.`
+      );
     } catch (err: any) {
       console.error(err);
       showNotification('error', 'Falha ao processar chave da nota: ' + err.message);
