@@ -696,7 +696,7 @@ export default function AdminPurchases() {
       const supName = matchedSup ? (matchedSup.nome_fantasia || matchedSup.razao_social) : `CNPJ ${cleanCnpj}`;
       showNotification(
         'info',
-        `📄 NF-e nº ${invoiceNum} (${supName}) identificada! A SEFAZ ainda não liberou o arquivo XML desta nota na fila pública. Os dados da nota e do fornecedor já foram preenchidos para você conferir os itens.`
+        `⏳ NF-e nº ${invoiceNum} (${supName}) identificada! O XML dos produtos ainda está na fila de processamento da SEFAZ. Você pode tentar novamente em instantes ou continuar a conferência agora (fornecedor e nº da nota já preenchidos).`
       );
     } catch (err: any) {
       console.error(err);

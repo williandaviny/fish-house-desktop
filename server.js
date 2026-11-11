@@ -154,7 +154,7 @@ const handleSefazDfe = async (req, res) => {
     if (docZipMatch && docZipMatch[1]) {
       return res.json({
         success: false,
-        error: 'A Manifestação da Nota foi registrada na SEFAZ. Aguarde alguns instantes e clique novamente em Buscar e Importar para baixar os itens.'
+        error: 'A Manifestação da Nota foi registrada na SEFAZ. O documento está na fila de liberação, aguarde alguns instantes e tente novamente.'
       });
     }
 
@@ -168,7 +168,7 @@ const handleSefazDfe = async (req, res) => {
 
     return res.json({
       success: false,
-      error: 'A SEFAZ não retornou o XML para esta chave de acesso.'
+      error: 'O XML desta nota ainda está na fila de processamento da SEFAZ. Tente novamente em instantes.'
     });
   } catch (error) {
     console.error('[SEFAZ DFe Error]:', error);
