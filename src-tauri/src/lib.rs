@@ -200,6 +200,164 @@ async fn fetch_sefaz_xml_by_key(
     Err("A SEFAZ não retornou o XML para esta chave.".to_string())
 }
 
+#[tauri::command]
+fn get_printers() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Get-CimInstance Win32_Printer | Select-Object -ExpandProperty Name",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("Erro ao consultar impressoras: {}", e))?;
+
+        if !output.status.success() {
+            return Err("Falha ao listar impressoras do Windows.".to_string());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let printers: Vec<String> = stdout
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        Ok(printers)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(vec![])
+    }
+}
+
+#[tauri::command]
+fn print_thermal_raw(text: String, printer_name: Option<String>) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let temp_dir = std::env::temp_dir();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let txt_path = temp_dir.join(format!("fh_print_{}.txt", timestamp));
+        let ps_path = temp_dir.join(format!("fh_print_{}.ps1", timestamp));
+
+        // Grava o arquivo de texto com codificação UTF-8
+        let mut file = File::create(&txt_path).map_err(|e| format!("Erro ao criar arquivo temporário de impressão: {}", e))?;
+        file.write_all(text.as_bytes()).map_err(|e| format!("Erro ao gravar conteúdo da impressão: {}", e))?;
+
+        let txt_str = txt_path.to_string_lossy().to_string().replace('\\', "\\\\");
+        let target_printer = match printer_name.filter(|s| !s.trim().is_empty()) {
+            Some(p) => format!("\"{}\"", p.replace('"', "`\"")),
+            None => "(Get-CimInstance Win32_Printer | Where-Object Default -eq $true | Select-Object -ExpandProperty Name)".to_string(),
+        };
+
+        let ps_code = format!(
+            r#"
+Add-Type -TypeDefinition @"
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+public class RawPrinter {{
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+    public class DOCINFOA {{
+        [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+        [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+        [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+    }}
+    [DllImport("winspool.drv", EntryPoint="OpenPrinterA", SetLastError=true, CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string szPrinter, out IntPtr hPrinter, IntPtr pd);
+
+    [DllImport("winspool.drv", EntryPoint="ClosePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool ClosePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", EntryPoint="StartDocPrinterA", SetLastError=true, CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool StartDocPrinter(IntPtr hPrinter, int level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
+
+    [DllImport("winspool.drv", EntryPoint="EndDocPrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool EndDocPrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", EntryPoint="StartPagePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool StartPagePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", EntryPoint="EndPagePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool EndPagePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", EntryPoint="WritePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
+
+    public static bool SendStringToPrinter(string szPrinterName, string szString) {{
+        byte[] bytes = System.Text.Encoding.GetEncoding(850).GetBytes(szString);
+        IntPtr hPrinter = new IntPtr(0);
+        DOCINFOA di = new DOCINFOA();
+        di.pDocName = "Fish House Cupom";
+        di.pDataType = "RAW";
+        if (OpenPrinter(szPrinterName, out hPrinter, IntPtr.Zero)) {{
+            if (StartDocPrinter(hPrinter, 1, di)) {{
+                if (StartPagePrinter(hPrinter)) {{
+                    IntPtr pUnmanagedBytes = Marshal.AllocCoTaskMem(bytes.Length);
+                    Marshal.Copy(bytes, 0, pUnmanagedBytes, bytes.Length);
+                    int dwWritten = 0;
+                    WritePrinter(hPrinter, pUnmanagedBytes, bytes.Length, out dwWritten);
+                    Marshal.FreeCoTaskMem(pUnmanagedBytes);
+                    EndPagePrinter(hPrinter);
+                }}
+                EndDocPrinter(hPrinter);
+            }}
+            ClosePrinter(hPrinter);
+            return true;
+        }}
+        return false;
+    }}
+}}
+"@
+$printer = {target}
+$content = [System.IO.File]::ReadAllText("{txt_path}", [System.Text.Encoding]::UTF8)
+if ($printer -and $content) {{
+    [RawPrinter]::SendStringToPrinter($printer, $content)
+}}
+"#,
+            target = target_printer,
+            txt_path = txt_str
+        );
+
+        let mut ps_file = File::create(&ps_path).map_err(|e| format!("Erro ao criar script PowerShell: {}", e))?;
+        ps_file.write_all(ps_code.as_bytes()).map_err(|e| format!("Erro ao gravar script PowerShell: {}", e))?;
+
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &ps_path.to_string_lossy(),
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("Falha ao invocar spooler do Windows: {}", e))?;
+
+        // Limpeza dos arquivos temporários
+        let _ = std::fs::remove_file(txt_path);
+        let _ = std::fs::remove_file(ps_path);
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Erro no spooler da impressora: {}", stderr));
+        }
+
+        Ok(true)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Impressão silenciosa nativa suportada apenas em Windows.".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -216,7 +374,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_url,
             download_and_install_update,
-            fetch_sefaz_xml_by_key
+            fetch_sefaz_xml_by_key,
+            get_printers,
+            print_thermal_raw
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

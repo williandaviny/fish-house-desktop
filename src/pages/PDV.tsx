@@ -22,7 +22,11 @@ import {
   Plus,
   Package,
   Barcode,
-  FileText
+  FileText,
+  Calendar,
+  Receipt,
+  Ban,
+  FileSpreadsheet
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../hooks/useSettings';
@@ -35,6 +39,12 @@ import { isDesktop } from '../utils/isDesktop';
 import { syncEngine } from '../services/local/syncEngine';
 import { downloadFiscalDocumentBlob, triggerPrintAndDownload } from '../services/fiscal/fiscalService';
 import { useScale } from '../services/scale/useScale';
+import { 
+  printThermalText, 
+  formatSaleReceiptText, 
+  formatCaixaReportText, 
+  getLocalPrinterSettings 
+} from '../services/printer/printerService';
 
 type Product = {
   id: string;
@@ -144,6 +154,28 @@ export default function PDV() {
   const [tefInstallments, setTefInstallments] = useState(1);
   const [tefResponse, setTefResponse] = useState<any | null>(null);
   const [bypassTef, setBypassTef] = useState(false);
+
+  // Relatório do Caixa / Leitura X
+  const [isPrintingReport, setIsPrintingReport] = useState(false);
+
+  // Vendas do Caixa e Cancelamento
+  const [isShiftSalesModalOpen, setIsShiftSalesModalOpen] = useState(false);
+  const [shiftSales, setShiftSales] = useState<any[]>([]);
+  const [loadingShiftSales, setLoadingShiftSales] = useState(false);
+  const [saleToCancel, setSaleToCancel] = useState<any | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  // Venda a Prazo (Fiado)
+  const [isFiadoModalOpen, setIsFiadoModalOpen] = useState(false);
+  const [fiadoCustomerDebt, setFiadoCustomerDebt] = useState<number>(0);
+  const [fiadoInstallmentsCount, setFiadoInstallmentsCount] = useState<number>(1);
+  const [fiadoDueDate, setFiadoDueDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [fiadoInstallments, setFiadoInstallments] = useState<Array<{ parcela: number; vencimento: string; valor: number }>>([]);
 
   useEffect(() => {
     checkCaixaStatus();
@@ -282,15 +314,51 @@ export default function PDV() {
   const fetchPaymentMethods = async () => {
     const local = localDb.getPaymentMethods();
     if (local && local.length > 0) {
-      setPaymentMethods(local);
-      const defaultPm = local.find(p => p.tipo === 'dinheiro') || local[0];
+      // Garante que A Prazo (Fiado) existe localmente
+      const hasFiado = local.some((p: any) => p.nome.toLowerCase().includes('prazo') || p.nome.toLowerCase().includes('fiado'));
+      let allMethods = local;
+      if (!hasFiado) {
+        const fiadoMock: PaymentMethod = {
+          id: 'fiado-method-default',
+          nome: 'A Prazo (Fiado)',
+          tipo: 'convenio',
+          recebimento_imediato: false,
+          taxa: 0
+        };
+        allMethods = [...local, fiadoMock];
+        localDb.setPaymentMethods(allMethods);
+      }
+      setPaymentMethods(allMethods);
+      const defaultPm = allMethods.find((p: any) => p.tipo === 'dinheiro') || allMethods[0];
       setSelectedPaymentMethod(defaultPm);
     } else {
-      const { data } = await supabase.from('formas_pagamento').select('*').order('nome');
+      let { data } = await supabase.from('formas_pagamento').select('*').order('nome');
       if (data) {
+        const hasFiado = data.some((p: any) => p.nome.toLowerCase().includes('prazo') || p.nome.toLowerCase().includes('fiado'));
+        if (!hasFiado) {
+          try {
+            const { data: inserted } = await supabase.from('formas_pagamento').insert([{
+              nome: 'A Prazo (Fiado)',
+              tipo: 'convenio',
+              recebimento_imediato: false,
+              taxa: 0.00
+            }]).select();
+            if (inserted && inserted[0]) {
+              data = [...data, inserted[0]];
+            }
+          } catch (_) {
+            data = [...data, {
+              id: 'fiado-fallback-id',
+              nome: 'A Prazo (Fiado)',
+              tipo: 'convenio',
+              recebimento_imediato: false,
+              taxa: 0.00
+            } as any];
+          }
+        }
         localDb.setPaymentMethods(data);
         setPaymentMethods(data);
-        const defaultPm = data.find(p => p.tipo === 'dinheiro') || data[0];
+        const defaultPm = data.find((p: any) => p.tipo === 'dinheiro') || data[0];
         setSelectedPaymentMethod(defaultPm);
       }
     }
@@ -378,14 +446,267 @@ export default function PDV() {
       .eq('id', caixa.id);
 
     if (!error) {
+      // Dispara automaticamente a impressão do relatório de fechamento de caixa
+      await handlePrintCaixaReport(true, Number(closingBalance));
       setCaixa(null);
       setCart([]);
       setSelectedCustomer(null);
-      alert('Caixa fechado com sucesso!');
+      alert('✅ Caixa fechado com sucesso e relatório de fechamento impresso!');
     } else {
       alert('Erro ao fechar caixa: ' + error.message);
     }
     setIsClosingCaixa(false);
+  };
+
+  /**
+   * Imprime Relatório do Caixa (Leitura X ou Fechamento Redução Z)
+   */
+  const handlePrintCaixaReport = async (isClosing: boolean, saldoFinalContado?: number) => {
+    if (!caixa) return;
+    setIsPrintingReport(true);
+    try {
+      // 1. Busca vendas deste caixa
+      const { data: sales, error: salesErr } = await supabase
+        .from('vendas')
+        .select('id, valor_total, desconto, acrescimo, valor_final, status, created_at')
+        .eq('caixa_id', caixa.id)
+        .neq('status', 'cancelada');
+
+      if (salesErr) throw salesErr;
+
+      const saleIds = (sales || []).map(s => s.id);
+      let payments: any[] = [];
+      if (saleIds.length > 0) {
+        const { data: pgmts } = await supabase
+          .from('pagamentos_venda')
+          .select('forma_pagamento_id, valor, parcelas, formas_pagamento(nome, tipo)')
+          .in('venda_id', saleIds);
+        payments = pgmts || [];
+      }
+
+      // Agrupa pagamentos por forma de pagamento
+      const pByMethod: Record<string, { nome: string; tipo: string; total: number; count: number }> = {};
+      payments.forEach((p: any) => {
+        const mName = p.formas_pagamento?.nome || 'Outros';
+        const mTipo = p.formas_pagamento?.tipo || 'outros';
+        if (!pByMethod[mName]) {
+          pByMethod[mName] = { nome: mName, tipo: mTipo, total: 0, count: 0 };
+        }
+        pByMethod[mName].total += Number(p.valor || 0);
+        pByMethod[mName].count += 1;
+      });
+
+      const totalVendas = (sales || []).reduce((acc, s) => acc + Number(s.valor_total || 0), 0);
+      const totalDescontos = (sales || []).reduce((acc, s) => acc + Number(s.desconto || 0), 0);
+      const totalLiquido = (sales || []).reduce((acc, s) => acc + Number(s.valor_final || 0), 0);
+
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const reportText = formatCaixaReportText({
+        isClosing,
+        caixaId: caixa.id,
+        dataAbertura: caixa.data_abertura,
+        dataFechamento: isClosing ? new Date().toISOString() : undefined,
+        operadorAberturaNome: user?.email?.split('@')[0]?.toUpperCase() || 'OPERADOR',
+        saldoInicial: Number(caixa.saldo_inicial || 0),
+        totalVendas,
+        totalDescontos,
+        totalLiquido,
+        vendasCount: (sales || []).length,
+        paymentsSummary: Object.values(pByMethod),
+        saldoFinalContado: saldoFinalContado !== undefined ? Number(saldoFinalContado) : undefined
+      });
+
+      const res = await printThermalText(reportText);
+      if (!res.success && res.error) {
+        alert('Aviso na impressão: ' + res.error);
+      }
+    } catch (err: any) {
+      alert('Erro ao gerar relatório do caixa: ' + err.message);
+    } finally {
+      setIsPrintingReport(false);
+    }
+  };
+
+  /**
+   * Busca vendas do turno para o modal de gerenciamento e cancelamento
+   */
+  const fetchShiftSales = async () => {
+    if (!caixa) return;
+    setLoadingShiftSales(true);
+    try {
+      const { data, error } = await supabase
+        .from('vendas')
+        .select('id, created_at, valor_total, desconto, acrescimo, valor_final, status, status_fiscal, observacoes, customers(name, cnpj_cpf, telefone), pagamentos_venda(valor, parcelas, formas_pagamento(nome))')
+        .eq('caixa_id', caixa.id)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        setShiftSales(data);
+      }
+    } catch (e: any) {
+      console.error('Erro ao buscar vendas do turno:', e);
+    } finally {
+      setLoadingShiftSales(false);
+    }
+  };
+
+  /**
+   * Confirmação e Execução de Cancelamento de Venda
+   */
+  const handleConfirmCancelSale = async () => {
+    if (!saleToCancel) return;
+    if (!cancelReason.trim()) {
+      alert('Por favor, digite o motivo do cancelamento.');
+      return;
+    }
+    setIsCancelling(true);
+    try {
+      // 1. Obter itens da venda para devolver ao estoque
+      const { data: items } = await supabase
+        .from('venda_itens')
+        .select('produto_id, quantidade, preco_unitario, local_saida_id')
+        .eq('venda_id', saleToCancel.id);
+
+      // 2. Devolve estoque em saldos_estoque e registra movimentacao
+      if (items && items.length > 0) {
+        for (const item of items) {
+          // Devolve para saldos_estoque
+          const { data: saldoAtual } = await supabase
+            .from('saldos_estoque')
+            .select('saldo_atual')
+            .eq('produto_id', item.produto_id)
+            .eq('local_estoque_id', item.local_saida_id)
+            .maybeSingle();
+
+          if (saldoAtual) {
+            await supabase
+              .from('saldos_estoque')
+              .update({ saldo_atual: Number(saldoAtual.saldo_atual) + Number(item.quantidade) })
+              .eq('produto_id', item.produto_id)
+              .eq('local_estoque_id', item.local_saida_id);
+          }
+
+          // Registra movimentação de entrada por estorno
+          const { data: { user } } = await supabase.auth.getUser();
+          await supabase.from('movimentacoes_estoque').insert([{
+            produto_id: item.produto_id,
+            origem_local_id: null,
+            destino_local_id: item.local_saida_id,
+            tipo_movimentacao: 'entrada_ajuste',
+            quantidade: item.quantidade,
+            custo_unitario: item.preco_unitario,
+            motivo: `Estorno de Venda #${saleToCancel.id.slice(0, 8).toUpperCase()}: ${cancelReason}`,
+            usuario_id: user?.id,
+            referencia_tipo: 'venda',
+            referencia_id: saleToCancel.id
+          }]);
+        }
+      }
+
+      // 3. Atualiza status da venda para 'cancelada'
+      const updatedObs = `${saleToCancel.observacoes ? saleToCancel.observacoes + ' | ' : ''}[CANCELADA: ${cancelReason}]`;
+      await supabase
+        .from('vendas')
+        .update({
+          status: 'cancelada',
+          observacoes: updatedObs
+        })
+        .eq('id', saleToCancel.id);
+
+      // 4. Cancela recebíveis pendentes em contas_receber (se houver fiado/parcela)
+      await supabase
+        .from('contas_receber')
+        .update({ status: 'cancelado' })
+        .eq('venda_id', saleToCancel.id);
+
+      // 5. Atualiza status fiscal se houver
+      await supabase
+        .from('documentos_fiscais')
+        .update({ status: 'cancelada' })
+        .eq('referencia_id', saleToCancel.id);
+
+      // 6. Imprime comprovante térmico de cancelamento
+      const cancelSlip = 
+        "==========================================\r\n" +
+        "          FISH HOUSE SC LTDA\r\n" +
+        "   *** COMPROVANTE DE CANCELAMENTO ***\r\n" +
+        "==========================================\r\n" +
+        `Data/Hora: ${new Date().toLocaleString('pt-BR')}\r\n` +
+        `Venda Cancelada: #${saleToCancel.id.slice(0, 8).toUpperCase()}\r\n` +
+        `Valor Estornado: R$ ${Number(saleToCancel.valor_final).toFixed(2)}\r\n` +
+        `Motivo: ${cancelReason}\r\n` +
+        "------------------------------------------\r\n" +
+        "Itens retornaram ao estoque com sucesso.\r\n" +
+        "==========================================\r\n\r\n\r\n\r\n";
+      
+      await printThermalText(cancelSlip);
+
+      alert('✅ Venda cancelada com sucesso! O estoque foi estornado.');
+      setSaleToCancel(null);
+      setCancelReason('');
+      fetchShiftSales();
+      fetchProducts();
+    } catch (err: any) {
+      alert('Erro ao cancelar venda: ' + err.message);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  /**
+   * Abre modal de Fiado calculando dívida anterior do cliente
+   */
+  const openFiadoModalForCustomer = async (cust: Customer) => {
+    try {
+      const { data: openDebts } = await supabase
+        .from('contas_receber')
+        .select('valor')
+        .eq('cliente_nome', cust.name)
+        .eq('status', 'pendente');
+
+      const totalOwed = (openDebts || []).reduce((acc: number, curr: any) => acc + Number(curr.valor), 0);
+      setFiadoCustomerDebt(totalOwed);
+    } catch (_) {
+      setFiadoCustomerDebt(0);
+    }
+
+    // Inicializa parcelas com 1x e data daqui a 30 dias
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    const dateStr = d.toISOString().split('T')[0];
+    setFiadoDueDate(dateStr);
+    setFiadoInstallmentsCount(1);
+    setFiadoInstallments([
+      { parcela: 1, vencimento: dateStr, valor: finalTotal }
+    ]);
+    setIsFiadoModalOpen(true);
+  };
+
+  /**
+   * Atualiza número de parcelas no Fiado
+   */
+  const handleUpdateFiadoInstallmentsCount = (num: number) => {
+    const n = Math.max(1, Math.min(12, num));
+    setFiadoInstallmentsCount(n);
+    const installmentValue = Number((finalTotal / n).toFixed(2));
+    const newArr = [];
+
+    const baseDate = new Date(fiadoDueDate + 'T12:00:00');
+    let sum = 0;
+
+    for (let i = 1; i <= n; i++) {
+      const pDate = new Date(baseDate);
+      pDate.setMonth(pDate.getMonth() + (i - 1));
+      const val = (i === n) ? Number((finalTotal - sum).toFixed(2)) : installmentValue;
+      sum += val;
+      newArr.push({
+        parcela: i,
+        vencimento: pDate.toISOString().split('T')[0],
+        valor: val
+      });
+    }
+    setFiadoInstallments(newArr);
   };
 
   const handleProductSelected = (product: Product) => {
@@ -518,6 +839,20 @@ export default function PDV() {
     }
     if (cart.length === 0 || !caixa || !activeCompany || !activeLocation || !selectedPaymentMethod) return;
 
+    const isFiado = selectedPaymentMethod.nome.toLowerCase().includes('prazo') || selectedPaymentMethod.nome.toLowerCase().includes('fiado');
+
+    if (isFiado) {
+      if (!selectedCustomer) {
+        alert('⚠️ Para realizar venda a prazo / fiado, selecione primeiro o cliente cadastrado!');
+        setIsCustomerModalOpen(true);
+        return;
+      }
+      if (fiadoInstallments.length === 0) {
+        openFiadoModalForCustomer(selectedCustomer);
+        return;
+      }
+    }
+
     let currentTefRes = null;
 
     if (
@@ -562,13 +897,25 @@ export default function PDV() {
         local_saida_id: activeLocation.id
       }));
 
-      const dbPayments = [{
-        forma_pagamento_id: selectedPaymentMethod.id,
-        valor: finalTotal,
-        parcelas: selectedPaymentMethod.tipo === 'credito' ? tefInstallments : 1,
-        status_recebimento: selectedPaymentMethod.recebimento_imediato ? 'recebido' : 'pendente',
-        data_prevista: new Date().toISOString().split('T')[0]
-      }];
+      const dbPayments = isFiado && fiadoInstallments.length > 0
+        ? fiadoInstallments.map((inst, idx) => ({
+            forma_pagamento_id: selectedPaymentMethod.id,
+            valor: Number(inst.valor),
+            parcelas: idx + 1,
+            status_recebimento: 'pendente',
+            data_prevista: inst.vencimento
+          }))
+        : [{
+            forma_pagamento_id: selectedPaymentMethod.id,
+            valor: finalTotal,
+            parcelas: selectedPaymentMethod.tipo === 'credito' ? tefInstallments : 1,
+            status_recebimento: selectedPaymentMethod.recebimento_imediato ? 'recebido' : 'pendente',
+            data_prevista: new Date().toISOString().split('T')[0]
+          }];
+
+      const finalObs = isFiado 
+        ? `${saleNotes ? saleNotes + ' | ' : ''}[A PRAZO/FIADO: ${fiadoInstallments.length}x parcela(s)]`
+        : (saleNotes || null);
 
       const { data, error } = await supabase.rpc('registrar_venda_pdv', {
         p_caixa_id: caixa.id,
@@ -580,7 +927,7 @@ export default function PDV() {
         p_valor_final: finalTotal,
         p_itens: dbItens,
         p_pagamentos: dbPayments,
-        p_observacoes: saleNotes || null
+        p_observacoes: finalObs
       });
 
       if (error) {
@@ -724,6 +1071,39 @@ export default function PDV() {
     const nfceSerie = fiscalDoc?.serie || '2';
     const protocol = fiscalDoc?.protocol || fiscalDoc?.protocolo || 'Autorizada SEFAZ';
     const isFiscal = !!fiscalDoc || !!accessKey;
+
+    // Impressão Térmica Direta / Silenciosa (sem abrir navegador de impressão)
+    const printerConfig = getLocalPrinterSettings();
+    const textReceipt = formatSaleReceiptText({
+      saleId: sale.id,
+      date: sale.created_at,
+      customerName: sale.customers?.name,
+      customerDoc: sale.customers?.cnpj_cpf,
+      items: items.map(i => ({
+        name: i.products?.name || 'Item',
+        quantity: Number(i.quantidade),
+        unit: i.products?.unit || 'UN',
+        price: Number(i.preco_unitario),
+        subtotal: Number(i.subtotal)
+      })),
+      subtotal: Number(sale.valor_total || 0),
+      discount: Number(sale.desconto || 0),
+      surcharge: Number(sale.acrescimo || 0),
+      total: Number(sale.valor_final || 0),
+      payments: payments.map(p => ({
+        methodName: p.formas_pagamento?.nome || 'PAGAMENTO',
+        amount: Number(p.valor),
+        installments: p.parcelas,
+        dueDate: p.data_prevista
+      })),
+      accessKey,
+      isFiscal
+    });
+
+    if (printerConfig.silentPrint && isDesktop) {
+      const res = await printThermalText(textReceipt);
+      if (res.success) return;
+    }
 
     const itemsHtml = items.map((i, idx) => `
       <div style="margin-bottom: 4px; font-size: 11px;">
@@ -1170,18 +1550,40 @@ export default function PDV() {
               />
             </form>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
             <button 
-              onClick={() => setIsTefAdminModalOpen(true)}
-              className="text-xs text-gold-400 hover:text-gold-300 font-bold uppercase tracking-wider flex items-center gap-1.5"
+              type="button"
+              onClick={() => {
+                fetchShiftSales();
+                setIsShiftSalesModalOpen(true);
+              }}
+              title="Visualizar e Cancelar Vendas do Turno Atual"
+              className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all"
             >
-              <CreditCard className="w-3.5 h-3.5" /> Menu TEF
+              <FileText className="w-3.5 h-3.5 text-gold-500" /> Vendas
             </button>
             <button 
-              onClick={() => setIsClosingCaixa(true)}
-              className="text-xs text-red-400 hover:text-red-300 font-bold uppercase tracking-wider flex items-center gap-1.5"
+              type="button"
+              onClick={() => handlePrintCaixaReport(false)}
+              disabled={isPrintingReport}
+              title="Imprimir Resumo do Dia / Leitura X na impressora térmica"
+              className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gold-400 hover:text-gold-300 border border-gold-500/20 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all disabled:opacity-50"
             >
-              <Square className="w-3.5 h-3.5 fill-current" /> Fechar Caixa
+              <Printer className="w-3.5 h-3.5" /> {isPrintingReport ? 'Imprimindo...' : 'Leitura X'}
+            </button>
+            <button 
+              type="button"
+              onClick={() => setIsTefAdminModalOpen(true)}
+              className="text-[10px] text-gray-400 hover:text-gold-300 font-bold uppercase tracking-wider flex items-center gap-1 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-full border border-white/5 transition-all"
+            >
+              <CreditCard className="w-3 h-3 text-gold-400" /> TEF
+            </button>
+            <button 
+              type="button"
+              onClick={() => setIsClosingCaixa(true)}
+              className="text-[10px] text-red-400 hover:text-red-300 font-black uppercase tracking-wider flex items-center gap-1 bg-red-500/10 hover:bg-red-500/20 px-2.5 py-1 rounded-full border border-red-500/20 transition-all"
+            >
+              <Square className="w-3 h-3 fill-current" /> Fechar
             </button>
           </div>
         </div>
@@ -1326,31 +1728,73 @@ export default function PDV() {
           </div>
 
           {/* Payment Method Selection */}
-          <div className="space-y-1">
-            <div className="grid grid-cols-3 gap-1.5">
-              {paymentMethods.slice(0, 6).map((pm) => (
-                <button
-                  key={pm.id}
-                  onClick={() => {
-                    setSelectedPaymentMethod(pm);
-                    setBypassTef(false);
-                  }}
-                  className={`py-1.5 px-1 rounded-xl border text-[9px] font-bold uppercase flex flex-col items-center justify-center gap-1 transition-all ${
-                    selectedPaymentMethod?.id === pm.id
-                    ? 'bg-gold-500/10 border-gold-500 text-gold-500 shadow-lg shadow-gold-500/5'
-                    : 'bg-white/5 border-white/5 text-gray-500 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  {pm.tipo === 'dinheiro' && <DollarSign className="w-3.5 h-3.5" />}
-                  {pm.tipo === 'pix' && <QrCode className="w-3.5 h-3.5" />}
-                  {pm.tipo === 'debito' && <CreditCard className="w-3.5 h-3.5 text-blue-400" />}
-                  {pm.tipo === 'credito' && <CreditCard className="w-3.5 h-3.5 text-purple-400" />}
-                  {pm.tipo === 'vale_refeicao' && <CreditCard className="w-3.5 h-3.5 text-green-400" />}
-                  {pm.tipo === 'convenio' && <User className="w-3.5 h-3.5 text-amber-400" />}
-                  <span className="truncate max-w-[80px]">{pm.nome}</span>
-                </button>
-              ))}
+          <div className="space-y-1.5">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+              {paymentMethods.map((pm) => {
+                const isFiado = pm.nome.toLowerCase().includes('prazo') || pm.nome.toLowerCase().includes('fiado');
+                return (
+                  <button
+                    key={pm.id}
+                    onClick={() => {
+                      setSelectedPaymentMethod(pm);
+                      setBypassTef(false);
+                      if (isFiado) {
+                        if (!selectedCustomer) {
+                          alert('⚠️ Para realizar venda a prazo (fiado), selecione o cliente cadastrado.');
+                          setIsCustomerModalOpen(true);
+                        } else {
+                          openFiadoModalForCustomer(selectedCustomer);
+                        }
+                      }
+                    }}
+                    className={`py-1.5 px-1 rounded-xl border text-[9px] font-bold uppercase flex flex-col items-center justify-center gap-1 transition-all ${
+                      selectedPaymentMethod?.id === pm.id
+                      ? 'bg-gold-500/10 border-gold-500 text-gold-500 shadow-lg shadow-gold-500/5'
+                      : isFiado
+                      ? 'bg-amber-500/5 border-amber-500/20 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30'
+                      : 'bg-white/5 border-white/5 text-gray-500 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {pm.tipo === 'dinheiro' && <DollarSign className="w-3.5 h-3.5" />}
+                    {pm.tipo === 'pix' && <QrCode className="w-3.5 h-3.5" />}
+                    {pm.tipo === 'debito' && <CreditCard className="w-3.5 h-3.5 text-blue-400" />}
+                    {pm.tipo === 'credito' && <CreditCard className="w-3.5 h-3.5 text-purple-400" />}
+                    {pm.tipo === 'vale_refeicao' && <CreditCard className="w-3.5 h-3.5 text-green-400" />}
+                    {isFiado ? <FileSpreadsheet className="w-3.5 h-3.5 text-amber-400" /> : (pm.tipo === 'convenio' && <User className="w-3.5 h-3.5 text-amber-400" />)}
+                    <span className="truncate max-w-[80px]">{pm.nome}</span>
+                  </button>
+                );
+              })}
             </div>
+
+            {/* Banner de resumo caso seja Venda a Prazo (Fiado) */}
+            {(selectedPaymentMethod?.nome.toLowerCase().includes('prazo') || selectedPaymentMethod?.nome.toLowerCase().includes('fiado')) && (
+              <div 
+                onClick={() => {
+                  if (selectedCustomer) {
+                    openFiadoModalForCustomer(selectedCustomer);
+                  } else {
+                    setIsCustomerModalOpen(true);
+                  }
+                }}
+                className="bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-xl cursor-pointer hover:bg-amber-500/15 transition-all flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-amber-400 shrink-0" />
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-amber-300">
+                      Venda A Prazo: {fiadoInstallments.length > 0 ? `${fiadoInstallments.length}x parcela(s)` : 'Configurar Parcelas'}
+                    </p>
+                    <p className="text-[9px] text-gray-400">
+                      Cliente: {selectedCustomer?.name || 'Nenhum selecionado (clique aqui)'}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[9px] bg-amber-500/20 text-amber-200 border border-amber-500/30 px-2 py-0.5 rounded font-black uppercase">
+                  {fiadoInstallments.length > 0 ? 'Alterar' : 'Configurar'}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Cash Change Panel */}
@@ -2124,6 +2568,407 @@ export default function PDV() {
                     </button>
                   </form>
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL DE PARCELAMENTO / VENDA A PRAZO (FIADO) */}
+      <AnimatePresence>
+        {isFiadoModalOpen && selectedCustomer && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+            <div onClick={() => setIsFiadoModalOpen(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-lg bg-ink-900 border border-white/10 rounded-[2.5rem] p-6 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+            >
+              {/* Header */}
+              <div className="flex justify-between items-center pb-4 border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                    <FileSpreadsheet className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-display font-black text-white uppercase tracking-tight">Parcelamento / A Prazo</h3>
+                    <p className="text-[10px] text-gray-500">Configuração de parcelas e acerto de caderneta</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsFiadoModalOpen(false)} 
+                  className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Informações do Cliente */}
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5 my-4 space-y-2 shrink-0">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="text-xs font-bold text-white uppercase">{selectedCustomer.name}</p>
+                    <p className="text-[10px] text-gray-400">
+                      {selectedCustomer.cnpj_cpf ? `CPF: ${selectedCustomer.cnpj_cpf}` : 'Sem CPF informado'}
+                      {selectedCustomer.telefone ? ` • Tel: ${selectedCustomer.telefone}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-[9px] bg-amber-500/10 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded font-black uppercase">
+                    Cliente Cadastrado
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
+                  <div className="bg-ink-950 p-2 rounded-xl">
+                    <p className="text-[9px] text-gray-500 uppercase font-black">Dívida Atual em Aberto</p>
+                    <p className={`text-xs font-black ${fiadoCustomerDebt > 0 ? 'text-amber-400' : 'text-gray-400'}`}>
+                      R$ {fiadoCustomerDebt.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="bg-ink-950 p-2 rounded-xl">
+                    <p className="text-[9px] text-gray-500 uppercase font-black">Total desta Venda</p>
+                    <p className="text-xs font-black text-gold-500">
+                      R$ {finalTotal.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Controles de Parcelamento */}
+              <div className="space-y-4 overflow-y-auto pr-1 flex-1 custom-scrollbar">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-gray-400 uppercase font-black tracking-wider block mb-1">
+                      Nº de Parcelas
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateFiadoInstallmentsCount(fiadoInstallmentsCount - 1)}
+                        disabled={fiadoInstallmentsCount <= 1}
+                        className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold flex items-center justify-center disabled:opacity-30"
+                      >
+                        -
+                      </button>
+                      <span className="flex-1 h-10 rounded-xl bg-ink-950 border border-white/10 flex items-center justify-center font-mono font-black text-white text-sm">
+                        {fiadoInstallmentsCount}x
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateFiadoInstallmentsCount(fiadoInstallmentsCount + 1)}
+                        disabled={fiadoInstallmentsCount >= 12}
+                        className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold flex items-center justify-center disabled:opacity-30"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-gray-400 uppercase font-black tracking-wider block mb-1">
+                      Primeiro Vencimento
+                    </label>
+                    <input 
+                      type="date"
+                      value={fiadoDueDate}
+                      onChange={e => {
+                        setFiadoDueDate(e.target.value);
+                        const n = fiadoInstallmentsCount;
+                        const installmentValue = Number((finalTotal / n).toFixed(2));
+                        const baseDate = new Date(e.target.value + 'T12:00:00');
+                        let sum = 0;
+                        const newArr = [];
+                        for (let i = 1; i <= n; i++) {
+                          const pDate = new Date(baseDate);
+                          pDate.setMonth(pDate.getMonth() + (i - 1));
+                          const val = (i === n) ? Number((finalTotal - sum).toFixed(2)) : installmentValue;
+                          sum += val;
+                          newArr.push({
+                            parcela: i,
+                            vencimento: pDate.toISOString().split('T')[0],
+                            valor: val
+                          });
+                        }
+                        setFiadoInstallments(newArr);
+                      }}
+                      className="w-full h-10 bg-ink-950 border border-white/10 rounded-xl px-3 text-xs font-bold text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Grade de Parcelas */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center text-[10px] text-gray-500 uppercase font-black tracking-wider px-2">
+                    <span>Ordem</span>
+                    <span>Vencimento</span>
+                    <span>Valor (R$)</span>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                    {fiadoInstallments.map((inst, idx) => (
+                      <div key={inst.parcela} className="flex items-center gap-2 bg-ink-950/60 p-2 rounded-xl border border-white/5">
+                        <span className="w-8 text-center text-xs font-bold text-gray-400">
+                          #{inst.parcela}
+                        </span>
+                        <input 
+                          type="date"
+                          value={inst.vencimento}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setFiadoInstallments(prev => prev.map((item, i) => i === idx ? { ...item, vencimento: val } : item));
+                          }}
+                          className="flex-1 bg-ink-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                        />
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={inst.valor}
+                          onChange={e => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setFiadoInstallments(prev => prev.map((item, i) => i === idx ? { ...item, valor: val } : item));
+                          }}
+                          className="w-24 bg-ink-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white text-right focus:outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Conferência dos Totais */}
+                {(() => {
+                  const sumParcelas = fiadoInstallments.reduce((acc, curr) => acc + Number(curr.valor || 0), 0);
+                  const diff = Number((finalTotal - sumParcelas).toFixed(2));
+                  const isExact = Math.abs(diff) < 0.01;
+
+                  return (
+                    <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase font-black">
+                          Total a Parcelar: <strong className="text-white">R$ {finalTotal.toFixed(2)}</strong>
+                        </p>
+                        <p className={`text-[10px] font-bold ${isExact ? 'text-green-400' : 'text-red-400'}`}>
+                          {isExact ? 'Diferença: R$ 0,00 (Exato)' : `Diferença: R$ ${diff.toFixed(2)}`}
+                        </p>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase ${isExact ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                        {isExact ? 'Pronto' : 'Ajustar Valores'}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Botões do Rodapé */}
+              <div className="pt-4 border-t border-white/10 flex gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsFiadoModalOpen(false)}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 font-bold py-3 rounded-xl uppercase tracking-wider text-xs"
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  disabled={(() => {
+                    const sumParcelas = fiadoInstallments.reduce((acc, curr) => acc + Number(curr.valor || 0), 0);
+                    return Math.abs(finalTotal - sumParcelas) >= 0.01;
+                  })()}
+                  onClick={() => {
+                    setIsFiadoModalOpen(false);
+                    handleFinalizeSale();
+                  }}
+                  className="flex-1 bg-amber-500 hover:bg-amber-400 text-ink-950 font-black py-3 rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-amber-500/10 disabled:opacity-50"
+                >
+                  Concluir Venda A Prazo
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL DE VENDAS DO CAIXA & CANCELAMENTO */}
+      <AnimatePresence>
+        {isShiftSalesModalOpen && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+            <div onClick={() => { setIsShiftSalesModalOpen(false); setSaleToCancel(null); }} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-2xl bg-ink-900 border border-white/10 rounded-[2.5rem] p-6 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-gold-500/10 border border-gold-500/20 flex items-center justify-center text-gold-400">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-display font-black text-white uppercase tracking-tight">Vendas do Turno Atual</h3>
+                    <p className="text-[10px] text-gray-500">Histórico de vendas registradas neste caixa e opção de cancelamento</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => { setIsShiftSalesModalOpen(false); setSaleToCancel(null); }} 
+                  className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Lista de Vendas */}
+              <div className="flex-1 overflow-y-auto py-4 space-y-2.5 custom-scrollbar">
+                {loadingShiftSales ? (
+                  <div className="py-12 text-center text-gray-500">
+                    <RefreshCcw className="w-6 h-6 animate-spin mx-auto mb-2 text-gold-500" />
+                    <p className="text-xs">Carregando vendas do caixa...</p>
+                  </div>
+                ) : shiftSales.length === 0 ? (
+                  <div className="py-12 text-center text-gray-500 italic">
+                    <Receipt className="w-10 h-10 opacity-20 mx-auto mb-2" />
+                    <p className="text-xs">Nenhuma venda registrada neste caixa ainda.</p>
+                  </div>
+                ) : (
+                  shiftSales.map((sale) => {
+                    const isCancelled = sale.status === 'cancelada';
+                    const paymentsDesc = (sale.pagamentos_venda || []).map((p: any) => p.formas_pagamento?.nome || 'Pgto').join(', ');
+
+                    return (
+                      <div 
+                        key={sale.id}
+                        className={`p-4 rounded-2xl border transition-all ${
+                          isCancelled 
+                            ? 'bg-red-500/5 border-red-500/15 opacity-70' 
+                            : 'bg-white/5 border-white/5 hover:border-white/10'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-black text-white">
+                                #{sale.id.slice(0, 8).toUpperCase()}
+                              </span>
+                              <span className="text-[10px] text-gray-400">
+                                {new Date(sale.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                isCancelled ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-green-500/20 text-green-400 border border-green-500/30'
+                              }`}>
+                                {isCancelled ? 'Cancelada' : 'Concluída'}
+                              </span>
+                              {sale.status_fiscal === 'emitida' && (
+                                <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                  NFC-e
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-300 font-bold mt-1">
+                              {sale.customers?.name || 'Consumidor Final'}
+                            </p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">
+                              Pagamento: <span className="text-gray-400">{paymentsDesc || 'Não identificado'}</span>
+                              {sale.observacoes ? ` • Obs: ${sale.observacoes}` : ''}
+                            </p>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <p className="text-sm font-black text-white">
+                              R$ {Number(sale.valor_final).toFixed(2)}
+                            </p>
+                            <div className="flex items-center gap-2 mt-2">
+                              <button
+                                type="button"
+                                onClick={() => handlePrintReceipt(sale.id)}
+                                className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-lg text-[10px] font-bold uppercase flex items-center gap-1 border border-white/5 transition-all"
+                              >
+                                <Printer className="w-3 h-3 text-gold-400" /> Imprimir
+                              </button>
+                              {!isCancelled && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSaleToCancel(sale)}
+                                  className="px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-[10px] font-bold uppercase flex items-center gap-1 border border-red-500/20 transition-all"
+                                >
+                                  <Ban className="w-3 h-3" /> Cancelar
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* SUBMODAL DE CONFIRMAÇÃO DE CANCELAMENTO */}
+      <AnimatePresence>
+        {saleToCancel && (
+          <div className="fixed inset-0 z-[170] flex items-center justify-center p-4">
+            <div onClick={() => setSaleToCancel(null)} className="absolute inset-0 bg-black/85 backdrop-blur-sm" />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-md bg-ink-900 border border-red-500/30 rounded-[2rem] p-6 shadow-2xl text-left"
+            >
+              <div className="flex items-center gap-3 text-red-400 mb-4">
+                <div className="w-10 h-10 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                  <Ban className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-display font-black text-white uppercase tracking-tight">Cancelar Venda #{saleToCancel.id.slice(0, 8).toUpperCase()}</h3>
+                  <p className="text-[10px] text-gray-500">Valor total: R$ {Number(saleToCancel.valor_final).toFixed(2)}</p>
+                </div>
+              </div>
+
+              <div className="bg-red-500/10 border border-red-500/20 p-3.5 rounded-2xl text-xs text-red-200 mb-4 leading-relaxed">
+                <p>⚠️ <strong>Atenção:</strong> Ao confirmar o cancelamento:</p>
+                <ul className="list-disc list-inside mt-1 space-y-0.5 text-[11px] text-red-300">
+                  <li>Os produtos serão estornados e devolvidos ao estoque.</li>
+                  <li>O lançamento financeiro será cancelado.</li>
+                  {saleToCancel.status_fiscal === 'emitida' && (
+                    <li className="font-bold">A NFC-e emitida será cancelada fiscalmente na SEFAZ.</li>
+                  )}
+                </ul>
+              </div>
+
+              <div className="space-y-2 mb-6">
+                <label className="text-[10px] text-gray-400 uppercase font-black tracking-wider ml-1">
+                  Motivo do Cancelamento *
+                </label>
+                <input 
+                  type="text" 
+                  placeholder="Ex: Desistência do cliente, valor digitado errado..."
+                  value={cancelReason}
+                  onChange={e => setCancelReason(e.target.value)}
+                  className="w-full bg-ink-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-red-500 focus:outline-none"
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSaleToCancel(null)}
+                  disabled={isCancelling}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 font-bold py-3 rounded-xl uppercase tracking-wider text-xs"
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmCancelSale}
+                  disabled={isCancelling || !cancelReason.trim()}
+                  className="flex-1 bg-red-600 hover:bg-red-500 text-white font-black py-3 rounded-xl uppercase tracking-wider text-xs flex items-center justify-center gap-2 shadow-lg shadow-red-600/20 disabled:opacity-50"
+                >
+                  {isCancelling ? 'Cancelando...' : 'Confirmar Cancelamento'}
+                </button>
               </div>
             </motion.div>
           </div>

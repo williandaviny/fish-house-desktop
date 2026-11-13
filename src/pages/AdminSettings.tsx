@@ -37,6 +37,13 @@ import { useScale } from '../services/scale/useScale';
 import { localDb } from '../services/local/localDb';
 import { syncEngine } from '../services/local/syncEngine';
 import { sefazService, CertificadoInfo } from '../services/fiscal/sefazService';
+import { 
+  getLocalPrinterSettings, 
+  saveLocalPrinterSettings, 
+  getInstalledPrinters, 
+  printThermalText,
+  PrintSettings 
+} from '../services/printer/printerService';
 
 type OpeningHour = {
   day: number;
@@ -145,12 +152,18 @@ export default function AdminSettings() {
   const [deptoName, setDeptoName] = useState('PEIXARIA');
   const [barcodeType, setBarcodeType] = useState(() => localStorage.getItem('scale_barcode_type') || 'price');
 
+  // Thermal Printer state
+  const [printerSettings, setPrinterSettings] = useState<PrintSettings>(getLocalPrinterSettings);
+  const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
+  const [isTestingPrinter, setIsTestingPrinter] = useState(false);
+
   const daysLabels = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
   useEffect(() => {
     fetchSettings();
     fetchDeliveryZones();
     sefazService.getCertificateStatus().then(setCertInfo);
+    getInstalledPrinters().then(printers => setAvailablePrinters(printers));
   }, []);
 
   // Balança Toledo Prix 3 Plus Hook
@@ -1560,10 +1573,143 @@ export default function AdminSettings() {
                 className="space-y-8"
               >
                 <div className="space-y-6">
+                   {/* Configurações de Impressão Direta / Silenciosa */}
+                   <div className="p-6 bg-white/5 rounded-3xl border border-white/10 space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Printer className="w-6 h-6 text-gold-500" />
+                          <div>
+                            <h3 className="text-lg font-bold text-white uppercase tracking-tight">Impressão Térmica Direta (PDV)</h3>
+                            <p className="text-xs text-gray-500">Configuração de impressão automática e silenciosa sem diálogo do Windows</p>
+                          </div>
+                        </div>
+                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-gold-500/10 text-gold-400 border border-gold-500/20">
+                          Bobina 80mm
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                        {/* Impressão Automática ao Finalizar */}
+                        <div className="bg-ink-950 p-4 rounded-2xl border border-white/10 flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-bold text-white uppercase tracking-wide">Imprimir Automaticamente</p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">Disparar impressão ao confirmar venda no caixa</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                              type="checkbox"
+                              checked={printerSettings.autoPrintSale}
+                              onChange={e => {
+                                const upd = saveLocalPrinterSettings({ autoPrintSale: e.target.checked });
+                                setPrinterSettings(upd);
+                              }}
+                              className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gold-500" />
+                          </label>
+                        </div>
+
+                        {/* Impressão Silenciosa (Direto na Spooler) */}
+                        <div className="bg-ink-950 p-4 rounded-2xl border border-white/10 flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-bold text-white uppercase tracking-wide">Impressão Silenciosa</p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">Imprime direto na impressora sem abrir janela</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                              type="checkbox"
+                              checked={printerSettings.silentPrint}
+                              onChange={e => {
+                                const upd = saveLocalPrinterSettings({ silentPrint: e.target.checked });
+                                setPrinterSettings(upd);
+                              }}
+                              className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gold-500" />
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Seleção de Impressora */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[10px] text-gray-500 font-bold uppercase ml-1">Impressora Alvo</label>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const list = await getInstalledPrinters();
+                              setAvailablePrinters(list);
+                            }}
+                            className="text-[10px] text-gold-400 hover:text-gold-300 flex items-center gap-1 font-bold uppercase"
+                          >
+                            <RefreshCw className="w-3 h-3" /> Atualizar Impressoras
+                          </button>
+                        </div>
+                        <select
+                          value={printerSettings.selectedPrinter || ''}
+                          onChange={e => {
+                            const upd = saveLocalPrinterSettings({ selectedPrinter: e.target.value });
+                            setPrinterSettings(upd);
+                          }}
+                          className="w-full bg-ink-950 border border-white/10 rounded-2xl p-4 text-white focus:border-gold-500 transition-all outline-none font-medium text-sm"
+                        >
+                          <option value="">(Padrão do Windows)</option>
+                          {availablePrinters.map(p => (
+                            <option key={p} value={p}>{p}</option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-gray-500 ml-1">
+                          {availablePrinters.length > 0 
+                            ? `Detectadas ${availablePrinters.length} impressora(s) no Windows.` 
+                            : 'Nenhuma impressora listada ou executando em modo Web.'}
+                        </p>
+                      </div>
+
+                      {/* Botão de Teste */}
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="button"
+                          disabled={isTestingPrinter}
+                          onClick={async () => {
+                            setIsTestingPrinter(true);
+                            try {
+                              const testText = 
+                                "==========================================\r\n" +
+                                "          FISH HOUSE SC LTDA\r\n" +
+                                "     *** TESTE DE IMPRESSÃO PDV ***\r\n" +
+                                "==========================================\r\n" +
+                                `Data/Hora: ${new Date().toLocaleString('pt-BR')}\r\n` +
+                                `Impressora: ${printerSettings.selectedPrinter || 'Padrão do Windows'}\r\n` +
+                                `Modo Silencioso: ${printerSettings.silentPrint ? 'ATIVADO (Direto)' : 'DESATIVADO'}\r\n` +
+                                "------------------------------------------\r\n" +
+                                "Impressão térmica configurada com sucesso!\r\n" +
+                                "==========================================\r\n\r\n\r\n\r\n";
+                              
+                              const res = await printThermalText(testText);
+                              if (res.success) {
+                                alert('✅ Comando de impressão enviado com sucesso para a impressora!');
+                              } else {
+                                alert('⚠️ Erro ao imprimir: ' + (res.error || 'Verifique o status da impressora.'));
+                              }
+                            } catch (e: any) {
+                              alert('Erro ao testar: ' + e.message);
+                            } finally {
+                              setIsTestingPrinter(false);
+                            }
+                          }}
+                          className="px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-gold-500 text-ink-950 hover:bg-gold-400 transition-all flex items-center gap-2 shadow-lg shadow-gold-500/10 disabled:opacity-50"
+                        >
+                          <Printer className="w-4 h-4" />
+                          {isTestingPrinter ? 'Enviando...' : 'Testar Impressão na Térmica'}
+                        </button>
+                      </div>
+                   </div>
+
+                   {/* Layout da Comanda */}
                    <div className="p-6 bg-white/5 rounded-3xl border border-white/10 space-y-6">
                       <div className="flex items-center gap-3">
-                        <Printer className="w-6 h-6 text-gold-500" />
-                        <h3 className="text-lg font-bold text-white uppercase tracking-tight">Comanda Térmica (Impressão)</h3>
+                        <FileText className="w-6 h-6 text-gold-500" />
+                        <h3 className="text-lg font-bold text-white uppercase tracking-tight">Textos da Comanda</h3>
                       </div>
                       
                       <div className="space-y-4">
@@ -2039,16 +2185,40 @@ export default function AdminSettings() {
                           Conectar Balança
                         </button>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => scale.disconnect()}
-                          className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-black px-4 py-2 rounded-xl uppercase tracking-wider text-[10px] transition-all"
-                        >
-                          Desconectar
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => scale.connect(true)}
+                            className="bg-white/10 hover:bg-white/20 text-white font-black px-3 py-2 rounded-xl uppercase tracking-wider text-[10px] transition-all flex items-center gap-1.5"
+                            title="Selecionar outra porta COM / USB"
+                          >
+                            <RefreshCcw className="w-3 h-3" /> Trocar Porta
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => scale.disconnect()}
+                            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-black px-3 py-2 rounded-xl uppercase tracking-wider text-[10px] transition-all"
+                          >
+                            Desconectar
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
+
+                  {scale.portInfo && (
+                    <div className="flex items-center justify-between bg-white/5 px-4 py-2 rounded-xl border border-white/5 text-[11px]">
+                      <span className="text-gray-400">Porta Atual: <strong className="text-white font-mono">{scale.portInfo}</strong></span>
+                      <span className="text-[10px] text-gray-500">Toledo Prix 3 Plus</span>
+                    </div>
+                  )}
+
+                  {scale.portInfo?.includes('PIN PAD') && (
+                    <div className="bg-amber-500/10 border border-amber-500/30 p-3 rounded-2xl flex items-center gap-2 text-xs text-amber-300 font-bold">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>A porta conectada pertence à maquininha PIN PAD e não à balança. Clique em "Trocar Porta" acima e selecione o cabo serial da balança Toledo.</span>
+                    </div>
+                  )}
 
                   {/* Configurações da Porta Serial */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

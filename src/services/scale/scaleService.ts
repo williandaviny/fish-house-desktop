@@ -20,6 +20,7 @@ export interface ScaleState {
   error: string | null;
   config: ScaleConfig;
   isStable?: boolean;
+  portInfo?: string;
 }
 
 const DEFAULT_CONFIG: ScaleConfig = {
@@ -137,8 +138,17 @@ class ScaleService {
       try {
         const ports = await (navigator as any).serial.getPorts();
         if (ports && ports.length > 0) {
-          // Use previously granted port
-          await this.connectWithPort(ports[0]);
+          // Filtra dispositivos que reconhecidamente não são balanças (ex: PIN PAD Gertec VID 0x1753)
+          const validPorts = ports.filter((p: any) => {
+            const info = p.getInfo?.() || {};
+            return info.usbVendorId !== 0x1753;
+          });
+
+          if (validPorts.length > 0) {
+            await this.connectWithPort(validPorts[0]);
+          } else {
+            console.log('[ScaleService] Portas encontradas pertencem a maquininha PIN PAD (Gertec). Auto-conexão evitada.');
+          }
         }
       } catch (err: any) {
         console.warn('Auto-reconexão da balança não concluída:', err);
@@ -154,8 +164,10 @@ class ScaleService {
       return false;
     }
 
-    // If port is already opened and connected, no need to reopen
-    if (this.port && this.state.status === 'connected') {
+    // Se solicitado forcePrompt, desconecta a porta atual para permitir que o usuário troque
+    if (forcePrompt && this.port) {
+      await this.disconnect();
+    } else if (this.port && this.state.status === 'connected') {
       return true;
     }
 
@@ -168,8 +180,12 @@ class ScaleService {
 
       if (!forcePrompt) {
         const existingPorts = await (navigator as any).serial.getPorts();
-        if (existingPorts && existingPorts.length > 0) {
-          targetPort = existingPorts[0];
+        const validPorts = (existingPorts || []).filter((p: any) => {
+          const info = p.getInfo?.() || {};
+          return info.usbVendorId !== 0x1753; // Evita PIN PAD Gertec
+        });
+        if (validPorts && validPorts.length > 0) {
+          targetPort = validPorts[0];
         }
       }
 
@@ -196,6 +212,26 @@ class ScaleService {
   private async connectWithPort(port: any): Promise<boolean> {
     try {
       this.port = port;
+
+      // Identifica o dispositivo conectado
+      const info = port.getInfo ? port.getInfo() : {};
+      const vid = info.usbVendorId ? `0x${info.usbVendorId.toString(16).padStart(4, '0')}` : null;
+      const pid = info.usbProductId ? `0x${info.usbProductId.toString(16).padStart(4, '0')}` : null;
+
+      let deviceLabel = 'Porta Serial COM';
+      if (info.usbVendorId === 0x1753) {
+        deviceLabel = 'Aviso: Porta associada ao PIN PAD Gertec (TEF)';
+      } else if (info.usbVendorId === 0x067b) {
+        deviceLabel = 'Adaptador Prolific USB-Serial';
+      } else if (info.usbVendorId === 0x0403) {
+        deviceLabel = 'Adaptador FTDI USB-Serial';
+      } else if (info.usbVendorId === 0x1a86) {
+        deviceLabel = 'Adaptador CH340 USB-Serial';
+      } else if (info.usbVendorId === 0x10c4) {
+        deviceLabel = 'Adaptador CP210x USB-Serial';
+      }
+
+      this.state.portInfo = vid && pid ? `${deviceLabel} (${vid}:${pid})` : deviceLabel;
 
       // Check if port is already open
       const isOpen = port.readable !== null || (port as any).isOpen;
@@ -249,7 +285,7 @@ class ScaleService {
 
     try {
       if (this.reader) {
-        await this.reader.cancel().catch(() => {});
+        await this.reader.cancel().catch(() => { });
         this.reader.releaseLock?.();
         this.reader = null;
       }
@@ -258,7 +294,7 @@ class ScaleService {
         this.writer = null;
       }
       if (this.port) {
-        await this.port.close().catch(() => {});
+        await this.port.close().catch(() => { });
         this.port = null;
       }
     } catch (e) {
@@ -289,18 +325,22 @@ class ScaleService {
       return;
     }
 
+    let writer: any = null;
     try {
       if (!this.port.writable) {
         return;
       }
 
-      // Toledo Prix 3 Plus responds to ENQ (0x05)
-      const writer = this.port.writable.getWriter();
+      // Toledo Prix 3 Plus responde ao comando ENQ (0x05)
+      writer = this.port.writable.getWriter();
       const enq = new Uint8Array([0x05]);
       await writer.write(enq);
-      writer.releaseLock();
     } catch (err: any) {
-      console.error('Erro ao enviar comando ENQ para balança:', err);
+      console.warn('Erro ao enviar comando ENQ para balança:', err);
+    } finally {
+      try {
+        writer?.releaseLock?.();
+      } catch (_) { }
     }
   }
 
@@ -310,7 +350,7 @@ class ScaleService {
     this.pollTimer = setInterval(() => {
       this.requestWeight();
     }, Math.max(300, this.state.config.pollInterval));
-    
+
     // First immediate poll
     this.requestWeight();
   }
@@ -373,7 +413,10 @@ class ScaleService {
     }
 
     this.buffer += chunk;
-    this.state.rawResponse = visualChunk.trim();
+    if (this.buffer.length > 500) {
+      this.buffer = this.buffer.slice(-200);
+    }
+    this.state.rawResponse = visualChunk.trim() || this.state.rawResponse;
 
     // Check if buffer contains frame termination (STX/ETX or CRLF)
     if (
