@@ -21,6 +21,7 @@ const STORAGE_KEYS = {
   TARAS: 'fishhouse_local_taras',
   PAYMENT_METHODS: 'fishhouse_local_payment_methods',
   CAIXA_CURRENT: 'fishhouse_local_caixa_current',
+  MOVIMENTACOES_CAIXA: 'fishhouse_local_movimentacoes_caixa',
   ORDERS: 'fishhouse_local_orders',
   SYNC_QUEUE: 'fishhouse_local_sync_queue',
   LAST_SYNC: 'fishhouse_local_last_sync_timestamp'
@@ -154,6 +155,31 @@ export const localDb = {
 
   clearCurrentCaixa(): void {
     setItem(STORAGE_KEYS.CAIXA_CURRENT, null);
+  },
+
+  // --- MOVIMENTAÇÕES DE CAIXA (SUPRIMENTO & SANGRIA) ---
+  getMovimentacoesCaixa(caixaId?: string): any[] {
+    const list = getItem<any[]>(STORAGE_KEYS.MOVIMENTACOES_CAIXA, []);
+    if (caixaId) {
+      return list.filter(m => m.caixa_id === caixaId);
+    }
+    return list;
+  },
+
+  saveMovimentacaoCaixa(item: any): void {
+    const list = this.getMovimentacoesCaixa();
+    const formatted = {
+      id: item.id || `mov_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      caixa_id: item.caixa_id,
+      tipo: item.tipo, // 'suprimento' | 'sangria'
+      valor: Number(item.valor),
+      motivo: item.motivo || '',
+      operador_id: item.operador_id || null,
+      operador_nome: item.operador_nome || '',
+      created_at: item.created_at || new Date().toISOString()
+    };
+    list.unshift(formatted);
+    setItem(STORAGE_KEYS.MOVIMENTACOES_CAIXA, list);
   },
 
   // --- VENDAS & PEDIDOS ---

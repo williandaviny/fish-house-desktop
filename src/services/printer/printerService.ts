@@ -242,6 +242,55 @@ export function formatSaleReceiptText(params: {
 }
 
 /**
+ * Formata o comprovante de Suprimento ou Sangria para bobina térmica
+ */
+export function formatMovimentacaoCaixaReceiptText(params: {
+  tipo: 'suprimento' | 'sangria';
+  valor: number;
+  motivo: string;
+  operadorNome?: string;
+  dataHora?: Date | string;
+  caixaId: string;
+}): string {
+  const sep = '==========================================';
+  const dash = '------------------------------------------';
+  const isSangria = params.tipo === 'sangria';
+  const title = isSangria 
+    ? 'COMPROVANTE DE SANGRIA DE CAIXA' 
+    : 'COMPROVANTE DE SUPRIMENTO DE CAIXA';
+  const subtitle = isSangria 
+    ? '(RETIRADA DE DINHEIRO DA GAVETA)' 
+    : '(ENTRADA DE TROCO NA GAVETA)';
+  const now = new Date(params.dataHora || new Date()).toLocaleString('pt-BR');
+  const shortId = params.caixaId.slice(0, 8).toUpperCase();
+
+  let out = '';
+  out += `${sep}\r\n`;
+  out += `          FISH HOUSE SC LTDA\r\n`;
+  out += ` CNPJ: 63.265.618/0001-01 - IE: 263906078\r\n`;
+  out += ` Rua Pref. Juvenal Mafra, 42 - Centro\r\n`;
+  out += ` Navegantes/SC - Fone: (47) 3011-4981\r\n`;
+  out += `${sep}\r\n`;
+  out += `      ${title}\r\n`;
+  out += `      ${subtitle}\r\n`;
+  out += `Emissão : ${now}\r\n`;
+  out += `Caixa ID: #${shortId}\r\n`;
+  if (params.operadorNome) {
+    out += `Operador: ${params.operadorNome}\r\n`;
+  }
+  out += `${dash}\r\n`;
+  out += `TIPO OPERAÇÃO: ${isSangria ? '(-) SANGRIA / RETIRADA' : '(+) SUPRIMENTO / ENTRADA'}\r\n`;
+  out += `VALOR        : R$ ${params.valor.toFixed(2).padStart(10, ' ')}\r\n`;
+  out += `MOTIVO       : ${params.motivo}\r\n`;
+  out += `${dash}\r\n`;
+  out += `Assinatura do Responsável:\r\n\r\n\r\n`;
+  out += `__________________________________________\r\n`;
+  out += `\r\n\r\n\r\n\r\n`;
+
+  return out;
+}
+
+/**
  * Formata o relatório financeiro do Caixa para bobina térmica (Leitura X ou Fechamento)
  */
 export function formatCaixaReportText(params: {
@@ -261,6 +310,14 @@ export function formatCaixaReportText(params: {
     tipo: string;
     total: number;
     count: number;
+  }>;
+  totalSuprimentos?: number;
+  totalSangrias?: number;
+  movimentacoesList?: Array<{
+    tipo: 'suprimento' | 'sangria';
+    valor: number;
+    motivo: string;
+    created_at?: string;
   }>;
   saldoFinalContado?: number;
 }): string {
@@ -312,11 +369,32 @@ export function formatCaixaReportText(params: {
     }
   });
 
+  const totalSuprimentos = params.totalSuprimentos || 0;
+  const totalSangrias = params.totalSangrias || 0;
+  const esperadoDinheiro = params.saldoInicial + totalEmDinheiro + totalSuprimentos - totalSangrias;
+
+  if (params.movimentacoesList && params.movimentacoesList.length > 0) {
+    out += `${dash}\r\n`;
+    out += `MOVIMENTAÇÕES DE CAIXA:\r\n`;
+    params.movimentacoesList.forEach(m => {
+      const isSang = m.tipo === 'sangria';
+      const tag = isSang ? '(-) SANGRIA' : '(+) SUPRIM ';
+      const val = `R$ ${Number(m.valor).toFixed(2)}`.padStart(10, ' ');
+      const desc = m.motivo.length > 18 ? m.motivo.slice(0, 18) : m.motivo;
+      out += `  ${tag} ${val} | ${desc}\r\n`;
+    });
+  }
+
   out += `${dash}\r\n`;
-  const esperadoDinheiro = params.saldoInicial + totalEmDinheiro;
   out += `CONFERÊNCIA DA GAVETA (ESPÉCIE):\r\n`;
   out += `  Fundo de Troco Inicial: R$ ${params.saldoInicial.toFixed(2).padStart(9, ' ')}\r\n`;
   out += `  Vendas em Dinheiro    : R$ ${totalEmDinheiro.toFixed(2).padStart(9, ' ')}\r\n`;
+  if (totalSuprimentos > 0) {
+    out += `  (+) Suprimentos       : R$ ${totalSuprimentos.toFixed(2).padStart(9, ' ')}\r\n`;
+  }
+  if (totalSangrias > 0) {
+    out += `  (-) Sangrias          : R$ ${totalSangrias.toFixed(2).padStart(9, ' ')}\r\n`;
+  }
   out += `  ESPERADO EM DINHEIRO  : R$ ${esperadoDinheiro.toFixed(2).padStart(9, ' ')}\r\n`;
 
   if (params.isClosing && params.saldoFinalContado !== undefined) {

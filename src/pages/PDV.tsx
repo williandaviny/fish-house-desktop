@@ -26,7 +26,12 @@ import {
   Calendar,
   Receipt,
   Ban,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  Split,
+  Layers,
+  Coins
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../hooks/useSettings';
@@ -43,6 +48,7 @@ import {
   printThermalText, 
   formatSaleReceiptText, 
   formatCaixaReportText, 
+  formatMovimentacaoCaixaReceiptText,
   getLocalPrinterSettings 
 } from '../services/printer/printerService';
 
@@ -177,6 +183,36 @@ export default function PDV() {
   });
   const [fiadoInstallments, setFiadoInstallments] = useState<Array<{ parcela: number; vencimento: string; valor: number }>>([]);
 
+  // Suprimento e Sangria de Caixa
+  const [isSuprimentoModalOpen, setIsSuprimentoModalOpen] = useState(false);
+  const [isSangriaModalOpen, setIsSangriaModalOpen] = useState(false);
+  const [movimentacaoValor, setMovimentacaoValor] = useState('');
+  const [movimentacaoMotivo, setMovimentacaoMotivo] = useState('');
+  const [isSavingMovimentacao, setIsSavingMovimentacao] = useState(false);
+  const [caixaMovimentacoes, setCaixaMovimentacoes] = useState<any[]>([]);
+  const [printMovimentacaoSlip, setPrintMovimentacaoSlip] = useState(true);
+
+  // Pagamento Dividido / Múltiplas Formas
+  const [isSplitPaymentModalOpen, setIsSplitPaymentModalOpen] = useState(false);
+  const [splitPayments, setSplitPayments] = useState<Array<{
+    id: string;
+    forma_pagamento_id: string;
+    forma_pagamento_nome: string;
+    tipo: string;
+    valor: number;
+    parcelas?: number;
+    data_prevista?: string;
+  }>>([]);
+  const [splitCurrentMethodId, setSplitCurrentMethodId] = useState<string>('');
+  const [splitCurrentAmount, setSplitCurrentAmount] = useState<string>('');
+  const [splitCurrentInstallments, setSplitCurrentInstallments] = useState<number>(1);
+  const [splitCurrentDueDate, setSplitCurrentDueDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [splitReceivedCash, setSplitReceivedCash] = useState<string>('');
+
   useEffect(() => {
     checkCaixaStatus();
     fetchPaymentMethods();
@@ -305,6 +341,7 @@ export default function PDV() {
       setCaixa(data[0] as Caixa);
       fetchProducts();
       fetchCustomers();
+      fetchMovimentacoesCaixa(data[0].id);
     } else {
       setCaixa(null);
     }
@@ -419,6 +456,7 @@ export default function PDV() {
       setCaixa(data as Caixa);
       fetchProducts();
       fetchCustomers();
+      fetchMovimentacoesCaixa(data.id);
     } else {
       alert('Erro ao abrir caixa: ' + (error?.message || 'Verifique suas permissões'));
     }
@@ -451,11 +489,163 @@ export default function PDV() {
       setCaixa(null);
       setCart([]);
       setSelectedCustomer(null);
+      setCaixaMovimentacoes([]);
+      setSplitPayments([]);
       alert('✅ Caixa fechado com sucesso e relatório de fechamento impresso!');
     } else {
       alert('Erro ao fechar caixa: ' + error.message);
     }
     setIsClosingCaixa(false);
+  };
+
+  /**
+   * Busca movimentações (suprimentos e sangrias) do caixa atual
+   */
+  const fetchMovimentacoesCaixa = async (caixaId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('movimentacoes_caixa')
+        .select('*')
+        .eq('caixa_id', caixaId)
+        .order('created_at', { ascending: false });
+
+      if (error || !data) {
+        const localList = localDb.getMovimentacoesCaixa(caixaId);
+        setCaixaMovimentacoes(localList);
+        return localList;
+      }
+      setCaixaMovimentacoes(data);
+      return data;
+    } catch (_) {
+      const localList = localDb.getMovimentacoesCaixa(caixaId);
+      setCaixaMovimentacoes(localList);
+      return localList;
+    }
+  };
+
+  /**
+   * Lança Suprimento (Entrada de Troco) ou Sangria (Retirada de Dinheiro)
+   */
+  const handleSaveMovimentacao = async (tipo: 'suprimento' | 'sangria') => {
+    if (!caixa) {
+      alert('Caixa não está aberto.');
+      return;
+    }
+    const val = Number(movimentacaoValor.replace(',', '.'));
+    if (isNaN(val) || val <= 0) {
+      alert('Informe um valor numérico válido maior que zero.');
+      return;
+    }
+    if (!movimentacaoMotivo.trim()) {
+      alert(`Informe o motivo / justificativa da ${tipo === 'sangria' ? 'sangria' : 'entrada de troco'}.`);
+      return;
+    }
+
+    setIsSavingMovimentacao(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const operadorNome = user?.email?.split('@')[0]?.toUpperCase() || 'OPERADOR';
+
+      const newMov = {
+        caixa_id: caixa.id,
+        empresa_id: activeCompany?.id || null,
+        tipo,
+        valor: val,
+        motivo: movimentacaoMotivo.trim(),
+        operador_id: user?.id || null,
+        operador_nome: operadorNome,
+        created_at: new Date().toISOString()
+      };
+
+      // Tenta gravar no Supabase
+      try {
+        await supabase.from('movimentacoes_caixa').insert([newMov]);
+      } catch (e) {
+        console.warn('[PDV] Falha ao salvar movimentação no Supabase (usando local fallback):', e);
+      }
+
+      // Salva no banco local
+      localDb.saveMovimentacaoCaixa(newMov);
+
+      // Imprime comprovante térmico se selecionado
+      if (printMovimentacaoSlip) {
+        const slipText = formatMovimentacaoCaixaReceiptText({
+          tipo,
+          valor: val,
+          motivo: movimentacaoMotivo.trim(),
+          operadorNome,
+          caixaId: caixa.id,
+          dataHora: newMov.created_at
+        });
+        await printThermalText(slipText);
+      }
+
+      await fetchMovimentacoesCaixa(caixa.id);
+
+      setMovimentacaoValor('');
+      setMovimentacaoMotivo('');
+      setIsSuprimentoModalOpen(false);
+      setIsSangriaModalOpen(false);
+
+      alert(`✅ ${tipo === 'suprimento' ? 'Suprimento registrado' : 'Sangria realizada'} com sucesso e comprovante impresso!`);
+    } catch (err: any) {
+      alert('Erro ao registrar movimentação: ' + err.message);
+    } finally {
+      setIsSavingMovimentacao(false);
+    }
+  };
+
+  /**
+   * Adiciona uma fatia de pagamento na divisão de pagamentos
+   */
+  const handleAddSplitPayment = () => {
+    const val = Number(splitCurrentAmount.replace(',', '.'));
+    if (isNaN(val) || val <= 0) {
+      alert('Informe um valor válido maior que zero.');
+      return;
+    }
+
+    const method = paymentMethods.find(m => m.id === splitCurrentMethodId);
+    if (!method) {
+      alert('Selecione uma forma de pagamento.');
+      return;
+    }
+
+    const isFiado = method.nome.toLowerCase().includes('prazo') || method.nome.toLowerCase().includes('fiado') || method.tipo === 'convenio';
+    if (isFiado && !selectedCustomer) {
+      alert('⚠️ Para incluir pagamento a prazo (fiado), é obrigatório selecionar o cliente cadastrado.');
+      setIsCustomerModalOpen(true);
+      return;
+    }
+
+    const totalJaLancado = splitPayments.reduce((sum, p) => sum + p.valor, 0);
+    const restante = Math.max(0, finalTotal - totalJaLancado);
+
+    const newItem = {
+      id: `split_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      forma_pagamento_id: method.id,
+      forma_pagamento_nome: method.nome,
+      tipo: method.tipo,
+      valor: val,
+      parcelas: method.tipo === 'credito' ? splitCurrentInstallments : 1,
+      data_prevista: isFiado ? splitCurrentDueDate : new Date().toISOString().split('T')[0]
+    };
+
+    const updated = [...splitPayments, newItem];
+    setSplitPayments(updated);
+
+    // Atualiza próximo valor sugerido para o restante
+    const novoTotal = updated.reduce((sum, p) => sum + p.valor, 0);
+    const novoRestante = Math.max(0, finalTotal - novoTotal);
+    setSplitCurrentAmount(novoRestante > 0 ? novoRestante.toFixed(2) : '');
+  };
+
+  const handleRemoveSplitPayment = (id: string) => {
+    const updated = splitPayments.filter(p => p.id !== id);
+    setSplitPayments(updated);
+    const novoTotal = updated.reduce((sum, p) => sum + p.valor, 0);
+    const novoRestante = Math.max(0, finalTotal - novoTotal);
+    setSplitCurrentAmount(novoRestante > 0 ? novoRestante.toFixed(2) : '');
   };
 
   /**
@@ -502,6 +692,15 @@ export default function PDV() {
 
       const { data: { user } } = await supabase.auth.getUser();
 
+      // Busca movimentações deste caixa (suprimentos e sangrias)
+      const movs = await fetchMovimentacoesCaixa(caixa.id);
+      const totalSuprimentos = movs
+        .filter((m: any) => m.tipo === 'suprimento')
+        .reduce((sum: number, m: any) => sum + Number(m.valor || 0), 0);
+      const totalSangrias = movs
+        .filter((m: any) => m.tipo === 'sangria')
+        .reduce((sum: number, m: any) => sum + Number(m.valor || 0), 0);
+
       const reportText = formatCaixaReportText({
         isClosing,
         caixaId: caixa.id,
@@ -514,6 +713,14 @@ export default function PDV() {
         totalLiquido,
         vendasCount: (sales || []).length,
         paymentsSummary: Object.values(pByMethod),
+        totalSuprimentos,
+        totalSangrias,
+        movimentacoesList: movs.map((m: any) => ({
+          tipo: m.tipo,
+          valor: Number(m.valor),
+          motivo: m.motivo,
+          created_at: m.created_at
+        })),
         saldoFinalContado: saldoFinalContado !== undefined ? Number(saldoFinalContado) : undefined
       });
 
@@ -837,11 +1044,30 @@ export default function PDV() {
       alert('⚠️ Venda bloqueada na Web: As vendas com baixa de estoque, pesagem e emissão fiscal são exclusivas do aplicativo instalado no caixa físico.');
       return;
     }
-    if (cart.length === 0 || !caixa || !activeCompany || !activeLocation || !selectedPaymentMethod) return;
+    if (cart.length === 0 || !caixa || !activeCompany || !activeLocation) return;
+    if (splitPayments.length === 0 && !selectedPaymentMethod) return;
 
-    const isFiado = selectedPaymentMethod.nome.toLowerCase().includes('prazo') || selectedPaymentMethod.nome.toLowerCase().includes('fiado');
+    // Se estiver usando Pagamento Dividido
+    if (splitPayments.length > 0) {
+      const sumSplit = splitPayments.reduce((acc, p) => acc + p.valor, 0);
+      if (Math.abs(sumSplit - finalTotal) > 0.05) {
+        alert(`O total dos pagamentos divididos (R$ ${sumSplit.toFixed(2)}) não confere com o total da venda (R$ ${finalTotal.toFixed(2)}). Ajuste os valores.`);
+        setIsSplitPaymentModalOpen(true);
+        return;
+      }
+      const hasFiadoSplit = splitPayments.some(sp => sp.forma_pagamento_nome.toLowerCase().includes('prazo') || sp.forma_pagamento_nome.toLowerCase().includes('fiado') || sp.tipo === 'convenio');
+      if (hasFiadoSplit && !selectedCustomer) {
+        alert('⚠️ Para realizar venda a prazo (fiado) dividida, selecione primeiro o cliente cadastrado!');
+        setIsCustomerModalOpen(true);
+        return;
+      }
+    }
 
-    if (isFiado) {
+    const isFiado = selectedPaymentMethod 
+      ? (selectedPaymentMethod.nome.toLowerCase().includes('prazo') || selectedPaymentMethod.nome.toLowerCase().includes('fiado'))
+      : false;
+
+    if (splitPayments.length === 0 && isFiado) {
       if (!selectedCustomer) {
         alert('⚠️ Para realizar venda a prazo / fiado, selecione primeiro o cliente cadastrado!');
         setIsCustomerModalOpen(true);
@@ -855,7 +1081,44 @@ export default function PDV() {
 
     let currentTefRes = null;
 
-    if (
+    // Processamento TEF para Pagamento Dividido
+    if (splitPayments.length > 0) {
+      for (const sp of splitPayments) {
+        if (
+          tefConfig.enabled && 
+          !bypassTef &&
+          (sp.tipo === 'credito' || sp.tipo === 'debito' || sp.tipo === 'pix')
+        ) {
+          try {
+            setIsTefModalOpen(true);
+            tefService.onMessage((msg) => setTefStatusMessage(msg));
+            const cardType = sp.tipo === 'credito' ? 'credito' : (sp.tipo === 'pix' ? 'pix' : 'debito');
+            const res = await tefService.processPayment(
+              sp.valor,
+              cardType,
+              {
+                installments: cardType === 'credito' ? (sp.parcelas || 1) : 1
+              }
+            );
+
+            setIsTefModalOpen(false);
+
+            if (!res.success) {
+              alert(`Transação TEF recusada (${sp.forma_pagamento_nome}): ` + res.message);
+              return;
+            }
+
+            currentTefRes = res;
+            setTefResponse(res);
+          } catch (err: any) {
+            setIsTefModalOpen(false);
+            alert(`Erro no processamento TEF (${sp.forma_pagamento_nome}): ` + err.message);
+            return;
+          }
+        }
+      }
+    } else if (
+      selectedPaymentMethod &&
       tefConfig.enabled && 
       !bypassTef &&
       (selectedPaymentMethod.tipo === 'credito' || selectedPaymentMethod.tipo === 'debito' || selectedPaymentMethod.tipo === 'pix')
@@ -897,25 +1160,46 @@ export default function PDV() {
         local_saida_id: activeLocation.id
       }));
 
-      const dbPayments = isFiado && fiadoInstallments.length > 0
-        ? fiadoInstallments.map((inst, idx) => ({
-            forma_pagamento_id: selectedPaymentMethod.id,
-            valor: Number(inst.valor),
-            parcelas: idx + 1,
-            status_recebimento: 'pendente',
-            data_prevista: inst.vencimento
-          }))
-        : [{
-            forma_pagamento_id: selectedPaymentMethod.id,
-            valor: finalTotal,
-            parcelas: selectedPaymentMethod.tipo === 'credito' ? tefInstallments : 1,
-            status_recebimento: selectedPaymentMethod.recebimento_imediato ? 'recebido' : 'pendente',
-            data_prevista: new Date().toISOString().split('T')[0]
-          }];
+      let dbPayments: any[] = [];
+      if (splitPayments.length > 0) {
+        dbPayments = splitPayments.map((sp) => {
+          const pmObj = paymentMethods.find(m => m.id === sp.forma_pagamento_id);
+          const isAberto = sp.forma_pagamento_nome.toLowerCase().includes('prazo') || sp.forma_pagamento_nome.toLowerCase().includes('fiado') || sp.tipo === 'convenio';
+          return {
+            forma_pagamento_id: sp.forma_pagamento_id,
+            valor: sp.valor,
+            parcelas: sp.parcelas || 1,
+            status_recebimento: isAberto ? 'pendente' : (pmObj?.recebimento_imediato ? 'recebido' : 'pendente'),
+            data_prevista: sp.data_prevista || new Date().toISOString().split('T')[0]
+          };
+        });
+      } else if (selectedPaymentMethod) {
+        dbPayments = isFiado && fiadoInstallments.length > 0
+          ? fiadoInstallments.map((inst, idx) => ({
+              forma_pagamento_id: selectedPaymentMethod.id,
+              valor: Number(inst.valor),
+              parcelas: idx + 1,
+              status_recebimento: 'pendente',
+              data_prevista: inst.vencimento
+            }))
+          : [{
+              forma_pagamento_id: selectedPaymentMethod.id,
+              valor: finalTotal,
+              parcelas: selectedPaymentMethod.tipo === 'credito' ? tefInstallments : 1,
+              status_recebimento: selectedPaymentMethod.recebimento_imediato ? 'recebido' : 'pendente',
+              data_prevista: new Date().toISOString().split('T')[0]
+            }];
+      }
 
-      const finalObs = isFiado 
-        ? `${saleNotes ? saleNotes + ' | ' : ''}[A PRAZO/FIADO: ${fiadoInstallments.length}x parcela(s)]`
-        : (saleNotes || null);
+      const splitDesc = splitPayments.length > 1
+        ? `[PAGAMENTO DIVIDIDO: ${splitPayments.map(p => `${p.forma_pagamento_nome} R$ ${p.valor.toFixed(2)}`).join(' + ')}]`
+        : '';
+
+      const finalObs = [
+        saleNotes,
+        (!splitPayments.length && isFiado) ? `[A PRAZO/FIADO: ${fiadoInstallments.length}x parcela(s)]` : '',
+        splitDesc
+      ].filter(Boolean).join(' | ') || null;
 
       const { data, error } = await supabase.rpc('registrar_venda_pdv', {
         p_caixa_id: caixa.id,
@@ -951,8 +1235,8 @@ export default function PDV() {
             rede: currentTefRes.rede,
             bandeira: currentTefRes.bandeira,
             valor: finalTotal,
-            tipo: selectedPaymentMethod.tipo,
-            parcelas: selectedPaymentMethod.tipo === 'credito' ? tefInstallments : 1,
+            tipo: selectedPaymentMethod ? selectedPaymentMethod.tipo : 'cartao',
+            parcelas: selectedPaymentMethod?.tipo === 'credito' ? tefInstallments : 1,
             comprovante_cliente: currentTefRes.comprovante_cliente,
             comprovante_estabelecimento: currentTefRes.comprovante_estabelecimento,
             status: 'aprovado'
@@ -966,6 +1250,10 @@ export default function PDV() {
       
       // Salva no banco local e abate estoque imediatamente (false para nao reenfileirar venda online)
       try {
+        const formaPgtoDesc = splitPayments.length > 0
+          ? `DIVIDIDO (${splitPayments.map(p => p.forma_pagamento_nome).join(' + ')})`
+          : (selectedPaymentMethod?.nome || 'Balcão');
+
         localDb.saveOrderLocally(
           {
             id: data,
@@ -977,7 +1265,7 @@ export default function PDV() {
             desconto: discountAmount,
             acrescimo: surchargeAmount,
             status: 'concluido',
-            forma_pagamento: selectedPaymentMethod.nome,
+            forma_pagamento: formaPgtoDesc,
             created_at: new Date().toISOString()
           },
           cart.map(item => ({
@@ -1004,6 +1292,7 @@ export default function PDV() {
       setSurchargeAmount(0);
       setReceivedAmount('');
       setSaleNotes('');
+      setSplitPayments([]);
       
       // Update local product stocks
       fetchProducts();
@@ -1550,7 +1839,31 @@ export default function PDV() {
               />
             </form>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            <button 
+              type="button"
+              onClick={() => {
+                setMovimentacaoValor('');
+                setMovimentacaoMotivo('Troco inicial / Entrada de moedas');
+                setIsSuprimentoModalOpen(true);
+              }}
+              title="Lançar Suprimento (Entrada de Dinheiro / Troco na Gaveta)"
+              className="px-2.5 py-1 bg-green-500/10 hover:bg-green-500/20 text-green-400 hover:text-green-300 border border-green-500/30 rounded-full text-[10px] font-black uppercase flex items-center gap-1 transition-all"
+            >
+              <ArrowDownCircle className="w-3.5 h-3.5" /> + Suprimento
+            </button>
+            <button 
+              type="button"
+              onClick={() => {
+                setMovimentacaoValor('');
+                setMovimentacaoMotivo('Sangria de segurança / Retirada');
+                setIsSangriaModalOpen(true);
+              }}
+              title="Lançar Sangria (Retirada de Dinheiro da Gaveta)"
+              className="px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded-full text-[10px] font-black uppercase flex items-center gap-1 transition-all"
+            >
+              <ArrowUpCircle className="w-3.5 h-3.5" /> - Sangria
+            </button>
             <button 
               type="button"
               onClick={() => {
@@ -1729,46 +2042,113 @@ export default function PDV() {
 
           {/* Payment Method Selection */}
           <div className="space-y-1.5">
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
-              {paymentMethods.map((pm) => {
-                const isFiado = pm.nome.toLowerCase().includes('prazo') || pm.nome.toLowerCase().includes('fiado');
-                return (
-                  <button
-                    key={pm.id}
-                    onClick={() => {
-                      setSelectedPaymentMethod(pm);
-                      setBypassTef(false);
-                      if (isFiado) {
-                        if (!selectedCustomer) {
-                          alert('⚠️ Para realizar venda a prazo (fiado), selecione o cliente cadastrado.');
-                          setIsCustomerModalOpen(true);
-                        } else {
-                          openFiadoModalForCustomer(selectedCustomer);
-                        }
-                      }
-                    }}
-                    className={`py-1.5 px-1 rounded-xl border text-[9px] font-bold uppercase flex flex-col items-center justify-center gap-1 transition-all ${
-                      selectedPaymentMethod?.id === pm.id
-                      ? 'bg-gold-500/10 border-gold-500 text-gold-500 shadow-lg shadow-gold-500/5'
-                      : isFiado
-                      ? 'bg-amber-500/5 border-amber-500/20 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30'
-                      : 'bg-white/5 border-white/5 text-gray-500 hover:text-white hover:bg-white/10'
-                    }`}
-                  >
-                    {pm.tipo === 'dinheiro' && <DollarSign className="w-3.5 h-3.5" />}
-                    {pm.tipo === 'pix' && <QrCode className="w-3.5 h-3.5" />}
-                    {pm.tipo === 'debito' && <CreditCard className="w-3.5 h-3.5 text-blue-400" />}
-                    {pm.tipo === 'credito' && <CreditCard className="w-3.5 h-3.5 text-purple-400" />}
-                    {pm.tipo === 'vale_refeicao' && <CreditCard className="w-3.5 h-3.5 text-green-400" />}
-                    {isFiado ? <FileSpreadsheet className="w-3.5 h-3.5 text-amber-400" /> : (pm.tipo === 'convenio' && <User className="w-3.5 h-3.5 text-amber-400" />)}
-                    <span className="truncate max-w-[80px]">{pm.nome}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {/* Banner de Pagamento Dividido Ativo */}
+            {splitPayments.length > 0 ? (
+              <div className="bg-gold-500/10 border border-gold-500/30 p-2.5 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-gold-400 font-black text-[10px] uppercase">
+                    <Split className="w-3.5 h-3.5" />
+                    <span>Pagamento Dividido ({splitPayments.length} Formas)</span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsSplitPaymentModalOpen(true)}
+                      className="text-[9px] bg-gold-500/20 hover:bg-gold-500/30 text-gold-300 px-2 py-0.5 rounded font-black uppercase transition-all"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSplitPayments([])}
+                      className="text-[9px] bg-red-500/20 hover:bg-red-500/30 text-red-300 px-2 py-0.5 rounded font-black uppercase transition-all"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  {splitPayments.map((sp) => (
+                    <div key={sp.id} className="flex justify-between items-center text-[10px] text-gray-300 bg-ink-950/70 px-2.5 py-1.5 rounded-xl border border-white/5">
+                      <span className="font-bold flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-gold-500" />
+                        {sp.forma_pagamento_nome} {sp.parcelas && sp.parcelas > 1 ? `(${sp.parcelas}x)` : ''}
+                      </span>
+                      <span className="font-mono font-black text-gold-400">R$ {sp.valor.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-between items-center pt-1 border-t border-gold-500/20 text-[10px]">
+                  <span className="text-gray-400 uppercase font-bold">Total Lançado:</span>
+                  <span className="font-black text-gold-400 font-mono">
+                    R$ {splitPayments.reduce((s, p) => s + p.valor, 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                  {paymentMethods.map((pm) => {
+                    const isFiado = pm.nome.toLowerCase().includes('prazo') || pm.nome.toLowerCase().includes('fiado');
+                    return (
+                      <button
+                        key={pm.id}
+                        onClick={() => {
+                          setSelectedPaymentMethod(pm);
+                          setBypassTef(false);
+                          if (isFiado) {
+                            if (!selectedCustomer) {
+                              alert('⚠️ Para realizar venda a prazo (fiado), selecione o cliente cadastrado.');
+                              setIsCustomerModalOpen(true);
+                            } else {
+                              openFiadoModalForCustomer(selectedCustomer);
+                            }
+                          }
+                        }}
+                        className={`py-1.5 px-1 rounded-xl border text-[9px] font-bold uppercase flex flex-col items-center justify-center gap-1 transition-all ${
+                          selectedPaymentMethod?.id === pm.id
+                          ? 'bg-gold-500/10 border-gold-500 text-gold-500 shadow-lg shadow-gold-500/5'
+                          : isFiado
+                          ? 'bg-amber-500/5 border-amber-500/20 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30'
+                          : 'bg-white/5 border-white/5 text-gray-500 hover:text-white hover:bg-white/10'
+                        }`}
+                      >
+                        {pm.tipo === 'dinheiro' && <DollarSign className="w-3.5 h-3.5" />}
+                        {pm.tipo === 'pix' && <QrCode className="w-3.5 h-3.5" />}
+                        {pm.tipo === 'debito' && <CreditCard className="w-3.5 h-3.5 text-blue-400" />}
+                        {pm.tipo === 'credito' && <CreditCard className="w-3.5 h-3.5 text-purple-400" />}
+                        {pm.tipo === 'vale_refeicao' && <CreditCard className="w-3.5 h-3.5 text-green-400" />}
+                        {isFiado ? <FileSpreadsheet className="w-3.5 h-3.5 text-amber-400" /> : (pm.tipo === 'convenio' && <User className="w-3.5 h-3.5 text-amber-400" />)}
+                        <span className="truncate max-w-[80px]">{pm.nome}</span>
+                      </button>
+                    );
+                  })}
+                </div>
 
-            {/* Banner de resumo caso seja Venda a Prazo (Fiado) */}
-            {(selectedPaymentMethod?.nome.toLowerCase().includes('prazo') || selectedPaymentMethod?.nome.toLowerCase().includes('fiado')) && (
+                {/* Botão para abrir o Modal de Dividir Pagamento */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const restante = finalTotal;
+                    setSplitCurrentAmount(restante > 0 ? restante.toFixed(2) : '');
+                    if (!splitCurrentMethodId && paymentMethods.length > 0) {
+                      setSplitCurrentMethodId(paymentMethods[0].id);
+                    }
+                    setIsSplitPaymentModalOpen(true);
+                  }}
+                  className="w-full py-1.5 px-3 rounded-xl border border-dashed border-gold-500/40 bg-gold-500/5 hover:bg-gold-500/10 text-gold-400 text-[10px] font-black uppercase flex items-center justify-between transition-all"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Split className="w-3.5 h-3.5 text-gold-500" />
+                    <span>Dividir Pagamento (Múltiplas Formas)</span>
+                  </div>
+                  <span className="text-[9px] text-gold-300/70 font-mono font-bold lowercase">dinheiro + pix / cartão</span>
+                </button>
+              </>
+            )}
+
+            {/* Banner de resumo caso seja Venda a Prazo (Fiado) simples */}
+            {splitPayments.length === 0 && (selectedPaymentMethod?.nome.toLowerCase().includes('prazo') || selectedPaymentMethod?.nome.toLowerCase().includes('fiado')) && (
               <div 
                 onClick={() => {
                   if (selectedCustomer) {
@@ -1797,8 +2177,8 @@ export default function PDV() {
             )}
           </div>
 
-          {/* Cash Change Panel */}
-          {selectedPaymentMethod?.tipo === 'dinheiro' && (
+          {/* Cash Change Panel (quando pagamento único em dinheiro) */}
+          {splitPayments.length === 0 && selectedPaymentMethod?.tipo === 'dinheiro' && (
             <div className="flex gap-4 items-center bg-white/5 border border-white/5 p-2 rounded-2xl">
               <div className="flex-1">
                 <label className="text-[8px] text-gray-500 uppercase font-black tracking-widest ml-1">Valor Recebido (R$)</label>
@@ -1818,7 +2198,7 @@ export default function PDV() {
           )}
 
           {/* TEF Installments Panel */}
-          {selectedPaymentMethod?.tipo === 'credito' && tefConfig.enabled && (
+          {splitPayments.length === 0 && selectedPaymentMethod?.tipo === 'credito' && tefConfig.enabled && (
             <div className="flex gap-4 items-center bg-white/5 border border-white/5 p-2 rounded-2xl">
               <div className="flex-1">
                 <label className="text-[8px] text-gray-500 uppercase font-black tracking-widest ml-1">Parcelamento (TEF)</label>
@@ -1838,7 +2218,7 @@ export default function PDV() {
           )}
 
           {/* TEF Bypass Switch */}
-          {tefConfig.enabled && (selectedPaymentMethod?.tipo === 'credito' || selectedPaymentMethod?.tipo === 'debito' || selectedPaymentMethod?.tipo === 'pix') && (
+          {tefConfig.enabled && ((splitPayments.length === 0 && (selectedPaymentMethod?.tipo === 'credito' || selectedPaymentMethod?.tipo === 'debito' || selectedPaymentMethod?.tipo === 'pix')) || (splitPayments.length > 0 && splitPayments.some(p => p.tipo === 'credito' || p.tipo === 'debito' || p.tipo === 'pix'))) && (
             <div className="flex items-center justify-between bg-white/5 p-3 rounded-2xl border border-white/5">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Cobrança Manual (Sem Pin Pad)</span>
               <input
@@ -1886,10 +2266,10 @@ export default function PDV() {
           {/* Finalize Button */}
           <button
             onClick={handleFinalizeSale}
-            disabled={cart.length === 0 || !selectedPaymentMethod}
+            disabled={cart.length === 0 || (splitPayments.length === 0 && !selectedPaymentMethod)}
             className="w-full bg-gold-500 hover:bg-gold-600 disabled:opacity-50 text-ink-950 font-black py-3 rounded-2xl uppercase tracking-widest transition-all shadow-lg shadow-gold-500/10 flex items-center justify-center gap-1.5 text-xs animate-none"
           >
-            Finalizar Venda
+            Finalizar Venda {splitPayments.length > 0 ? '(Dividida)' : ''}
           </button>
         </div>
       </div>
@@ -2970,6 +3350,468 @@ export default function PDV() {
                   {isCancelling ? 'Cancelando...' : 'Confirmar Cancelamento'}
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL DE SUPRIMENTO DE CAIXA */}
+      <AnimatePresence>
+        {isSuprimentoModalOpen && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+            <div onClick={() => setIsSuprimentoModalOpen(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-md bg-ink-900 border border-green-500/30 rounded-[2.5rem] p-6 shadow-2xl flex flex-col text-left"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center text-green-400">
+                    <ArrowDownCircle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-display font-black text-white uppercase tracking-tight">Suprimento de Caixa</h3>
+                    <p className="text-[10px] text-gray-500">Entrada de dinheiro para troco na gaveta</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsSuprimentoModalOpen(false)} 
+                  className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="py-4 space-y-4">
+                <div>
+                  <label className="text-[10px] text-gray-400 uppercase font-black tracking-wider block mb-1">
+                    Valor da Entrada (R$) *
+                  </label>
+                  <input 
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={movimentacaoValor}
+                    onChange={e => setMovimentacaoValor(e.target.value)}
+                    className="w-full bg-ink-950 border border-white/10 rounded-2xl px-4 py-3 text-xl font-bold text-white focus:border-green-500 focus:outline-none"
+                    autoFocus
+                  />
+                  <div className="flex gap-1.5 mt-2 overflow-x-auto pb-1">
+                    {[20, 50, 100, 200].map(v => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setMovimentacaoValor(v.toFixed(2))}
+                        className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-300 text-[10px] font-bold rounded-lg border border-white/5 transition-all"
+                      >
+                        +R$ {v}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-gray-400 uppercase font-black tracking-wider block mb-1">
+                    Motivo / Justificativa *
+                  </label>
+                  <input 
+                    type="text"
+                    placeholder="Ex: Troco inicial, moedas adicionais..."
+                    value={movimentacaoMotivo}
+                    onChange={e => setMovimentacaoMotivo(e.target.value)}
+                    className="w-full bg-ink-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-green-500 focus:outline-none"
+                  />
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {['Troco inicial adicional', 'Entrada de moedas', 'Reforço de gaveta'].map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setMovimentacaoMotivo(s)}
+                        className="text-[9px] text-gray-400 hover:text-green-300 bg-white/5 px-2 py-0.5 rounded transition-all"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5">
+                  <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider">Imprimir Comprovante Térmico</span>
+                  <input
+                    type="checkbox"
+                    checked={printMovimentacaoSlip}
+                    onChange={e => setPrintMovimentacaoSlip(e.target.checked)}
+                    className="w-4 h-4 rounded text-green-500 focus:ring-green-500 bg-ink-950 border-white/10"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-white/10 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsSuprimentoModalOpen(false)}
+                  disabled={isSavingMovimentacao}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 font-bold py-3 rounded-xl uppercase tracking-wider text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveMovimentacao('suprimento')}
+                  disabled={isSavingMovimentacao || !movimentacaoValor || Number(movimentacaoValor) <= 0}
+                  className="flex-1 bg-green-500 hover:bg-green-400 text-ink-950 font-black py-3 rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-green-500/10 disabled:opacity-50"
+                >
+                  {isSavingMovimentacao ? 'Salvando...' : 'Confirmar Suprimento'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL DE SANGRIA DE CAIXA */}
+      <AnimatePresence>
+        {isSangriaModalOpen && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+            <div onClick={() => setIsSangriaModalOpen(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-md bg-ink-900 border border-orange-500/30 rounded-[2.5rem] p-6 shadow-2xl flex flex-col text-left"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400">
+                    <ArrowUpCircle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-display font-black text-white uppercase tracking-tight">Sangria de Caixa</h3>
+                    <p className="text-[10px] text-gray-500">Retirada de dinheiro da gaveta por segurança ou despesa</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsSangriaModalOpen(false)} 
+                  className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="py-4 space-y-4">
+                <div>
+                  <label className="text-[10px] text-gray-400 uppercase font-black tracking-wider block mb-1">
+                    Valor da Retirada (R$) *
+                  </label>
+                  <input 
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={movimentacaoValor}
+                    onChange={e => setMovimentacaoValor(e.target.value)}
+                    className="w-full bg-ink-950 border border-white/10 rounded-2xl px-4 py-3 text-xl font-bold text-white focus:border-orange-500 focus:outline-none"
+                    autoFocus
+                  />
+                  <div className="flex gap-1.5 mt-2 overflow-x-auto pb-1">
+                    {[50, 100, 200, 500].map(v => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setMovimentacaoValor(v.toFixed(2))}
+                        className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-300 text-[10px] font-bold rounded-lg border border-white/5 transition-all"
+                      >
+                        R$ {v}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-gray-400 uppercase font-black tracking-wider block mb-1">
+                    Motivo / Destino da Sangria *
+                  </label>
+                  <input 
+                    type="text"
+                    placeholder="Ex: Retirada para cofre, sangria de segurança..."
+                    value={movimentacaoMotivo}
+                    onChange={e => setMovimentacaoMotivo(e.target.value)}
+                    className="w-full bg-ink-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-orange-500 focus:outline-none"
+                  />
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {['Sangria para cofre', 'Depósito bancário', 'Pagamento de despesa avulsa'].map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setMovimentacaoMotivo(s)}
+                        className="text-[9px] text-gray-400 hover:text-orange-300 bg-white/5 px-2 py-0.5 rounded transition-all"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5">
+                  <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider">Imprimir Comprovante Térmico</span>
+                  <input
+                    type="checkbox"
+                    checked={printMovimentacaoSlip}
+                    onChange={e => setPrintMovimentacaoSlip(e.target.checked)}
+                    className="w-4 h-4 rounded text-orange-500 focus:ring-orange-500 bg-ink-950 border-white/10"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-white/10 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsSangriaModalOpen(false)}
+                  disabled={isSavingMovimentacao}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 font-bold py-3 rounded-xl uppercase tracking-wider text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveMovimentacao('sangria')}
+                  disabled={isSavingMovimentacao || !movimentacaoValor || Number(movimentacaoValor) <= 0}
+                  className="flex-1 bg-orange-500 hover:bg-orange-400 text-ink-950 font-black py-3 rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-orange-500/10 disabled:opacity-50"
+                >
+                  {isSavingMovimentacao ? 'Salvando...' : 'Confirmar Sangria'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL DE PAGAMENTO DIVIDIDO (MÚLTIPLAS FORMAS) */}
+      <AnimatePresence>
+        {isSplitPaymentModalOpen && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+            <div onClick={() => setIsSplitPaymentModalOpen(false)} className="absolute inset-0 bg-black/85 backdrop-blur-sm" />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-xl bg-ink-900 border border-gold-500/30 rounded-[2.5rem] p-6 shadow-2xl flex flex-col max-h-[92vh] overflow-hidden text-left"
+            >
+              {/* Header */}
+              <div className="flex justify-between items-center pb-4 border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-gold-500/10 border border-gold-500/20 flex items-center justify-center text-gold-400">
+                    <Split className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-display font-black text-white uppercase tracking-tight">Dividir Pagamento</h3>
+                    <p className="text-[10px] text-gray-400">Combine dinheiro, Pix, cartão e a prazo na mesma venda</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsSplitPaymentModalOpen(false)} 
+                  className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Stat Cards */}
+              {(() => {
+                const totalLancado = splitPayments.reduce((sum, p) => sum + p.valor, 0);
+                const restante = Math.max(0, Number((finalTotal - totalLancado).toFixed(2)));
+                const isQuitado = Math.abs(finalTotal - totalLancado) < 0.01;
+
+                return (
+                  <div className="grid grid-cols-3 gap-2.5 my-3 shrink-0">
+                    <div className="bg-ink-950 p-2.5 rounded-2xl border border-white/5">
+                      <p className="text-[9px] text-gray-400 uppercase font-black">Total Venda</p>
+                      <p className="text-sm font-black text-white font-mono">R$ {finalTotal.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-ink-950 p-2.5 rounded-2xl border border-white/5">
+                      <p className="text-[9px] text-gray-400 uppercase font-black">Total Lançado</p>
+                      <p className={`text-sm font-black font-mono ${isQuitado ? 'text-green-400' : 'text-gold-400'}`}>
+                        R$ {totalLancado.toFixed(2)}
+                      </p>
+                    </div>
+                    <div className={`p-2.5 rounded-2xl border ${isQuitado ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/20'}`}>
+                      <p className="text-[9px] uppercase font-black text-gray-300">
+                        {isQuitado ? 'Status' : 'Falta Pagar'}
+                      </p>
+                      <p className={`text-sm font-black font-mono ${isQuitado ? 'text-green-400' : 'text-red-400'}`}>
+                        {isQuitado ? 'QUITADO ✅' : `R$ ${restante.toFixed(2)}`}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar">
+                {/* Formas Já Lançadas */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-gray-400 uppercase font-black tracking-wider block">
+                    Formas Adicionadas ({splitPayments.length})
+                  </label>
+                  {splitPayments.length === 0 ? (
+                    <div className="py-4 text-center text-gray-500 italic text-xs bg-ink-950 rounded-2xl border border-white/5">
+                      Nenhuma forma de pagamento adicionada ainda.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {splitPayments.map((sp) => (
+                        <div key={sp.id} className="flex justify-between items-center bg-white/5 border border-white/5 p-2.5 rounded-xl">
+                          <div>
+                            <p className="text-xs font-bold text-white uppercase">{sp.forma_pagamento_nome}</p>
+                            <p className="text-[10px] text-gray-400">
+                              {sp.parcelas && sp.parcelas > 1 ? `${sp.parcelas}x parcelas` : 'À vista'}
+                              {sp.data_prevista ? ` • Vencimento: ${new Date(sp.data_prevista + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono font-black text-sm text-gold-400">R$ {sp.valor.toFixed(2)}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSplitPayment(sp.id)}
+                              className="w-7 h-7 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 flex items-center justify-center transition-all"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Bloco de Adicionar Nova Forma */}
+                <div className="p-3.5 rounded-2xl bg-ink-950 border border-white/10 space-y-3">
+                  <p className="text-[10px] font-black uppercase text-gold-400 tracking-wider">
+                    + Adicionar Parcela / Forma
+                  </p>
+
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                    {paymentMethods.map((pm) => (
+                      <button
+                        key={pm.id}
+                        type="button"
+                        onClick={() => setSplitCurrentMethodId(pm.id)}
+                        className={`py-2 px-1 rounded-xl border text-[9px] font-bold uppercase flex flex-col items-center justify-center gap-1 transition-all ${
+                          splitCurrentMethodId === pm.id
+                            ? 'bg-gold-500/15 border-gold-500 text-gold-400'
+                            : 'bg-white/5 border-white/5 text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        {pm.tipo === 'dinheiro' && <DollarSign className="w-3 h-3" />}
+                        {pm.tipo === 'pix' && <QrCode className="w-3 h-3" />}
+                        {pm.tipo === 'debito' && <CreditCard className="w-3 h-3 text-blue-400" />}
+                        {pm.tipo === 'credito' && <CreditCard className="w-3 h-3 text-purple-400" />}
+                        {pm.tipo === 'vale_refeicao' && <CreditCard className="w-3 h-3 text-green-400" />}
+                        {pm.tipo === 'convenio' && <FileSpreadsheet className="w-3 h-3 text-amber-400" />}
+                        <span className="truncate max-w-[70px]">{pm.nome}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[9px] text-gray-500 uppercase font-black block mb-0.5">Valor (R$)</label>
+                      <input 
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={splitCurrentAmount}
+                        onChange={e => setSplitCurrentAmount(e.target.value)}
+                        className="w-full bg-ink-900 border border-white/10 rounded-xl px-3 py-2 text-sm font-bold text-white focus:border-gold-500 focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Se selecionado for crédito, mostra parcelas */}
+                    {(() => {
+                      const sel = paymentMethods.find(m => m.id === splitCurrentMethodId);
+                      if (sel?.tipo === 'credito') {
+                        return (
+                          <div>
+                            <label className="text-[9px] text-gray-500 uppercase font-black block mb-0.5">Parcelas (TEF)</label>
+                            <select
+                              value={splitCurrentInstallments}
+                              onChange={e => setSplitCurrentInstallments(Number(e.target.value))}
+                              className="w-full bg-ink-900 border border-white/10 rounded-xl px-2.5 py-2 text-xs font-bold text-white focus:outline-none"
+                            >
+                              {[...Array(12)].map((_, i) => (
+                                <option key={i + 1} value={i + 1}>{i + 1}x</option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      }
+                      if (sel?.tipo === 'convenio' || sel?.nome.toLowerCase().includes('prazo') || sel?.nome.toLowerCase().includes('fiado')) {
+                        return (
+                          <div>
+                            <label className="text-[9px] text-gray-500 uppercase font-black block mb-0.5">Vencimento</label>
+                            <input 
+                              type="date"
+                              value={splitCurrentDueDate}
+                              onChange={e => setSplitCurrentDueDate(e.target.value)}
+                              className="w-full bg-ink-900 border border-white/10 rounded-xl px-2.5 py-2 text-xs font-bold text-white focus:outline-none"
+                            />
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="flex items-end">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const totalLancado = splitPayments.reduce((sum, p) => sum + p.valor, 0);
+                              const restante = Math.max(0, Number((finalTotal - totalLancado).toFixed(2)));
+                              setSplitCurrentAmount(restante.toFixed(2));
+                            }}
+                            className="w-full py-2 bg-white/5 hover:bg-white/10 text-gold-400 text-[10px] font-bold rounded-xl border border-white/5 uppercase transition-all"
+                          >
+                            Preencher Restante
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddSplitPayment}
+                    disabled={!splitCurrentAmount || Number(splitCurrentAmount) <= 0 || !splitCurrentMethodId}
+                    className="w-full py-2.5 bg-gold-500 hover:bg-gold-400 disabled:opacity-40 text-ink-950 font-black rounded-xl text-xs uppercase tracking-wider transition-all"
+                  >
+                    + Adicionar Esta Forma
+                  </button>
+                </div>
+              </div>
+
+              {/* Footer */}
+              {(() => {
+                const totalLancado = splitPayments.reduce((sum, p) => sum + p.valor, 0);
+                const isQuitado = Math.abs(finalTotal - totalLancado) < 0.01;
+
+                return (
+                  <div className="pt-3 border-t border-white/10 flex gap-2.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setSplitPayments([])}
+                      className="px-4 py-3 bg-white/5 hover:bg-white/10 text-gray-400 font-bold rounded-xl uppercase tracking-wider text-xs"
+                    >
+                      Limpar Tudo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsSplitPaymentModalOpen(false)}
+                      disabled={!isQuitado && splitPayments.length === 0}
+                      className="flex-1 bg-gold-500 hover:bg-gold-400 disabled:opacity-40 text-ink-950 font-black py-3 rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-gold-500/10"
+                    >
+                      {isQuitado ? 'Confirmar e Usar Pagamento Dividido' : 'Concluir Divisão'}
+                    </button>
+                  </div>
+                );
+              })()}
             </motion.div>
           </div>
         )}
