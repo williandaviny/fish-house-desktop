@@ -700,7 +700,15 @@ export default function AdminPurchases() {
       );
     } catch (err: any) {
       console.error(err);
-      showNotification('error', 'Falha ao processar chave da nota: ' + err.message);
+      const msg = err.message || String(err);
+      if (msg.includes('Consumo Indevido') || msg.includes('20 consultas')) {
+        showNotification(
+          'error',
+          '⏳ Limite da SEFAZ atingido (Consumo Indevido: máx. 20 consultas/hora). Para importar agora sem esperar 1 hora, basta arrastar o arquivo .XML da nota na tela abaixo ou clicar em "Registrar Compra".'
+        );
+      } else {
+        showNotification('error', 'Falha ao processar chave da nota: ' + msg);
+      }
     } finally {
       setIsFetchingKey(false);
     }
