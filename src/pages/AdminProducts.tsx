@@ -67,6 +67,32 @@ type Product = {
   cfop?: string;
 };
 
+/**
+ * Retorna o limite mínimo de estoque configurado para o produto.
+ * Se houver estoque_minimo na ficha, utiliza ele.
+ * Caso contrário, aplica as regras padrão:
+ * - Unidades / Pacotes: 6 unidades
+ * - Pesáveis (KG): 5 kg
+ */
+export function getProductMinStock(p: { unit?: string; estoque_minimo?: number | null }): number {
+  if (p.estoque_minimo !== undefined && p.estoque_minimo !== null && !isNaN(Number(p.estoque_minimo)) && Number(p.estoque_minimo) > 0) {
+    return Number(p.estoque_minimo);
+  }
+  const unit = (p.unit || '').trim().toLowerCase();
+  if (unit === 'kg' || unit === 'quilo' || unit === 'quilos') {
+    return 5;
+  }
+  return 6;
+}
+
+/**
+ * Determina se o produto está em estoque baixo ou zerado.
+ */
+export function isProductLowStock(p: { stock: number; unit?: string; estoque_minimo?: number | null }): boolean {
+  const threshold = getProductMinStock(p);
+  return Number(p.stock || 0) <= threshold;
+}
+
 export default function AdminProducts() {
   const [products, setProducts] = useState<Product[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
@@ -90,6 +116,50 @@ export default function AdminProducts() {
   const [replenishValues, setReplenishValues] = useState<Record<string, number>>({});
   const [comboItems, setComboItems] = useState<{child_product_id: string, quantity: number, product_name?: string}[]>([]);
   const [comboSearchTerm, setComboSearchTerm] = useState('');
+  const [lowStockFilter, setLowStockFilter] = useState<'all' | 'zero' | 'unit' | 'kg'>('all');
+  const [lowStockSearch, setLowStockSearch] = useState('');
+  const [copiedListToast, setCopiedListToast] = useState(false);
+
+  const handleCopyLowStockList = () => {
+    const list = allProducts.filter(isProductLowStock);
+    if (list.length === 0) {
+      alert('Nenhum produto em estoque baixo no momento!');
+      return;
+    }
+
+    const zeroStock = list.filter(p => Number(p.stock || 0) <= 0);
+    const lowStock = list.filter(p => Number(p.stock || 0) > 0);
+
+    const nowStr = new Date().toLocaleString('pt-BR');
+    let text = `📋 *LISTA DE REPOSIÇÃO - FISH HOUSE*\r\n`;
+    text += `Emissão: ${nowStr}\r\n`;
+    text += `Total de itens para reposição: ${list.length}\r\n\r\n`;
+
+    if (zeroStock.length > 0) {
+      text += `🚨 *PRODUTOS ESGOTADOS (ESTOQUE ZERO):*\r\n`;
+      zeroStock.forEach((p, idx) => {
+        const min = getProductMinStock(p);
+        text += `${idx + 1}. ${p.name.toUpperCase()} - 0 ${p.unit} (Mínimo: ${min} ${p.unit})\r\n`;
+      });
+      text += `\r\n`;
+    }
+
+    if (lowStock.length > 0) {
+      text += `⚠️ *PRODUTOS COM ESTOQUE BAIXO:*\r\n`;
+      lowStock.forEach((p, idx) => {
+        const min = getProductMinStock(p);
+        text += `${idx + 1}. ${p.name.toUpperCase()} - Atual: ${p.stock} ${p.unit} (Mínimo: ${min} ${p.unit})\r\n`;
+      });
+    }
+
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(text);
+      setCopiedListToast(true);
+      setTimeout(() => setCopiedListToast(false), 3000);
+    } else {
+      alert(text);
+    }
+  };
   const { settings } = useSettings();
   const barcodeBufferRef = useRef('');
   const lastCharTimeRef = useRef(0);
@@ -687,9 +757,9 @@ export default function AdminProducts() {
           className={`px-6 py-2 rounded-xl text-sm font-bold relative transition-all ${activeTab === 'low_stock' ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/20' : 'text-gray-500 hover:text-white'}`}
         >
           Estoque Baixo
-          {products.filter(p => p.stock <= 10).length > 0 && activeTab !== 'low_stock' && (
-            <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse border border-ink-950 font-black">
-              {products.filter(p => p.stock <= 10).length}
+          {allProducts.filter(isProductLowStock).length > 0 && activeTab !== 'low_stock' && (
+            <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] min-w-4 h-4 px-1 rounded-full flex items-center justify-center animate-pulse border border-ink-950 font-black">
+              {allProducts.filter(isProductLowStock).length}
             </span>
           )}
         </button>
@@ -820,7 +890,7 @@ export default function AdminProducts() {
                       </td>
                       <td className="px-6 py-4 text-center">
                         <div className="flex items-center justify-center gap-3">
-                          <span className={`text-xs font-bold whitespace-nowrap min-w-[60px] ${p.stock <= 5 ? 'text-red-500 animate-pulse' : 'text-green-500'}`}>
+                          <span className={`text-xs font-bold whitespace-nowrap min-w-[60px] ${isProductLowStock(p) ? 'text-red-500 animate-pulse' : 'text-green-500'}`}>
                             {p.stock} {p.unit}
                           </span>
                           <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
@@ -887,7 +957,7 @@ export default function AdminProducts() {
                 <div className="grid grid-cols-2 gap-3 items-center pt-2 border-t border-white/5">
                   <div className="space-y-1">
                     <p className="text-[8px] text-gray-500 font-black uppercase tracking-[0.2em]">Estoque</p>
-                    <p className={`text-sm font-black ${p.stock <= 5 ? 'text-red-500' : 'text-white'}`}>
+                    <p className={`text-sm font-black ${isProductLowStock(p) ? 'text-red-500' : 'text-white'}`}>
                       {p.stock} <span className="text-[10px] opacity-40 uppercase">{p.unit}</span>
                     </p>
                   </div>
@@ -930,49 +1000,271 @@ export default function AdminProducts() {
         </div>
       )}
 
-      {activeTab === 'low_stock' && (
-        <div className="bg-ink-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden">
-          <div className="p-6 border-b border-white/5 flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
-                <TrendingDown className="w-5 h-5 text-red-500" /> Estoque Crítico
-              </h2>
-              <p className="text-xs text-gray-500 mt-1">Produtos com estoque abaixo do recomendado.</p>
+      {activeTab === 'low_stock' && (() => {
+        const allLowStock = allProducts.filter(isProductLowStock);
+        const zeroStockCount = allLowStock.filter(p => Number(p.stock || 0) <= 0).length;
+        const unitCount = allLowStock.filter(p => (p.unit || '').trim().toLowerCase() !== 'kg').length;
+        const kgCount = allLowStock.filter(p => (p.unit || '').trim().toLowerCase() === 'kg').length;
+
+        const normalize = (str: string) => 
+          str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : '';
+        const cleanSearch = normalize(lowStockSearch);
+
+        const filteredList = allLowStock.filter(p => {
+          if (lowStockFilter === 'zero' && Number(p.stock || 0) > 0) return false;
+          if (lowStockFilter === 'unit' && (p.unit || '').trim().toLowerCase() === 'kg') return false;
+          if (lowStockFilter === 'kg' && (p.unit || '').trim().toLowerCase() !== 'kg') return false;
+          
+          if (cleanSearch) {
+            const matchesSearch = normalize(p.name).includes(cleanSearch) || 
+              (p.barcode && p.barcode.includes(cleanSearch)) ||
+              (p.plu_codigo && p.plu_codigo.includes(cleanSearch));
+            if (!matchesSearch) return false;
+          }
+          return true;
+        });
+
+        // Ordenação inteligente: Primeiro os zerados, depois pelo menor estoque
+        filteredList.sort((a, b) => {
+          const sA = Number(a.stock || 0);
+          const sB = Number(b.stock || 0);
+          if (sA <= 0 && sB > 0) return -1;
+          if (sA > 0 && sB <= 0) return 1;
+          if (sA !== sB) return sA - sB;
+          return (a.name || '').localeCompare(b.name || '');
+        });
+
+        return (
+          <div className="space-y-4">
+            {/* Header & Ações */}
+            <div className="bg-ink-900 border border-white/10 rounded-3xl p-6 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500">
+                    <TrendingDown className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
+                      Estoque Baixo & Reposição
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-red-500/20 text-red-400 border border-red-500/30">
+                        {allLowStock.length} {allLowStock.length === 1 ? 'item' : 'itens'}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Critério: Unidades/pacotes ≤ 6 un • Pesáveis ≤ 5 kg • Respeita estoque mínimo da ficha.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleCopyLowStockList}
+                  className="bg-gold-500 hover:bg-gold-400 text-ink-950 px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-gold-500/20 transition-all active:scale-95 shrink-0"
+                >
+                  {copiedListToast ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-ink-950" />
+                      Copiado p/ WhatsApp!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      Copiar Lista de Compras
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Barra de Filtros e Busca Rápida */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-ink-900/60 p-3 rounded-2xl border border-white/5">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                <button
+                  type="button"
+                  onClick={() => setLowStockFilter('all')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                    lowStockFilter === 'all'
+                      ? 'bg-gold-500 text-ink-950'
+                      : 'bg-white/5 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Todos ({allLowStock.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLowStockFilter('zero')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                    lowStockFilter === 'zero'
+                      ? 'bg-red-500 text-white shadow-lg shadow-red-500/20'
+                      : 'bg-white/5 text-red-400 hover:bg-red-500/10'
+                  }`}
+                >
+                  Zerados / Esgotados ({zeroStockCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLowStockFilter('unit')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                    lowStockFilter === 'unit'
+                      ? 'bg-gold-500 text-ink-950'
+                      : 'bg-white/5 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Unidades / Pacotes ({unitCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLowStockFilter('kg')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                    lowStockFilter === 'kg'
+                      ? 'bg-gold-500 text-ink-950'
+                      : 'bg-white/5 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Pesáveis KG ({kgCount})
+                </button>
+              </div>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-4 h-4" />
+                <input
+                  type="text"
+                  placeholder="Filtrar por nome ou cód..."
+                  value={lowStockSearch}
+                  onChange={e => setLowStockSearch(e.target.value)}
+                  className="w-full bg-ink-950 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder:text-gray-500 focus:border-gold-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Tabela de Produtos com Estoque Baixo */}
+            <div className="bg-ink-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-white/5 text-left">
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase">Produto</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase">Categoria</th>
+                      <th className="px-6 py-4 text-center text-xs font-bold text-gray-400 uppercase">Estoque Atual</th>
+                      <th className="px-6 py-4 text-center text-xs font-bold text-gray-400 uppercase">Mínimo</th>
+                      <th className="px-6 py-4 text-center text-xs font-bold text-gray-400 uppercase">Reposição Rápida</th>
+                      <th className="px-6 py-4 text-right text-xs font-bold text-gray-400 uppercase">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filteredList.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                          {allLowStock.length === 0 ? (
+                            <div className="space-y-2">
+                              <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto opacity-70" />
+                              <p className="text-sm font-bold text-white">Estoque 100% em dia!</p>
+                              <p className="text-xs text-gray-500">Nenhum produto está abaixo do limite de segurança no momento.</p>
+                            </div>
+                          ) : (
+                            <p className="text-xs">Nenhum produto encontrado para o filtro selecionado.</p>
+                          )}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredList.map((p) => {
+                        const isZero = Number(p.stock || 0) <= 0;
+                        const min = getProductMinStock(p);
+                        const isCustomMin = p.estoque_minimo !== undefined && p.estoque_minimo !== null && Number(p.estoque_minimo) > 0;
+
+                        return (
+                          <tr key={p.id} className="hover:bg-white/5 transition-all group">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <img 
+                                  src={getOptimizedImageUrl(p.image_url)} 
+                                  alt="" 
+                                  className="w-11 h-11 rounded-xl object-contain bg-gray-50/5 border border-white/5 shrink-0" 
+                                />
+                                <div>
+                                  <p className="font-bold text-sm text-white">{p.name}</p>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    {p.barcode && (
+                                      <span className="font-mono text-[10px] text-gray-500">
+                                        EAN: {p.barcode}
+                                      </span>
+                                    )}
+                                    {p.plu_codigo && (
+                                      <span className="font-mono text-[10px] text-amber-500 bg-amber-500/10 px-1.5 rounded">
+                                        PLU: {p.plu_codigo}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg bg-white/5 text-gray-400 border border-white/5">
+                                {p.category}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              {isZero ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-red-500/15 text-red-400 border border-red-500/30 animate-pulse whitespace-nowrap">
+                                  0 {p.unit} • ESGOTADO
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-500/15 text-amber-300 border border-amber-500/30 whitespace-nowrap">
+                                  {p.stock} {p.unit} • BAIXO
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <div className="flex flex-col items-center">
+                                <span className="text-xs font-mono font-bold text-gray-300">
+                                  {min} {p.unit}
+                                </span>
+                                <span className="text-[8px] font-bold text-gray-500 uppercase tracking-wider">
+                                  {isCustomMin ? '(Ficha)' : '(Padrão)'}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <input 
+                                  type="number" 
+                                  placeholder="+ Qtd" 
+                                  value={replenishValues[p.id] || ''}
+                                  onChange={e => setReplenishValues(prev => ({ ...prev, [p.id]: Number(e.target.value) }))}
+                                  className="w-20 bg-ink-950 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white text-center font-bold focus:border-gold-500 focus:outline-none"
+                                />
+                                <button 
+                                  type="button"
+                                  onClick={() => handleQuickReplenish(p.id, p.stock)}
+                                  disabled={!replenishValues[p.id] || replenishValues[p.id] <= 0}
+                                  className="bg-gold-500 hover:bg-gold-400 disabled:opacity-30 text-ink-950 px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1 transition-all active:scale-95"
+                                  title="Adicionar ao estoque"
+                                >
+                                  <Plus className="w-3.5 h-3.5" /> Repor
+                                </button>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <button 
+                                onClick={() => { setSelectedProduct(p); setIsModalOpen(true); }} 
+                                className="text-xs font-bold text-gray-400 hover:text-white uppercase tracking-wider px-3.5 py-1.5 rounded-xl border border-white/10 hover:border-gold-500/50 hover:bg-white/5 transition-all"
+                              >
+                                Ficha
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-white/5 text-left">
-                  <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase">Produto</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-400 uppercase">Estoque</th>
-                  <th className="px-6 py-4 text-right text-xs font-bold text-gray-400 uppercase">Ação</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {products.filter(p => p.stock <= 10).map((p) => (
-                  <tr key={p.id} className="hover:bg-white/5 transition-all">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <img src={getOptimizedImageUrl(p.image_url)} alt="" className="w-10 h-10 rounded-lg object-contain bg-gray-50/5" />
-                        <span className="font-bold text-sm text-white">{p.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <span className={`text-sm font-bold ${p.stock === 0 ? 'text-red-500' : 'text-amber-500'}`}>
-                        {p.stock} {p.unit}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button onClick={() => { setSelectedProduct(p); setIsModalOpen(true); }} className="text-xs font-bold text-gray-500 hover:text-white uppercase tracking-widest px-4 py-2 rounded-lg border border-white/5">Ficha</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {activeTab === 'waitlist' && (
         <div className="bg-ink-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden">

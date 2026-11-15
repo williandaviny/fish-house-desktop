@@ -113,8 +113,8 @@ export default function AdminDashboard() {
         supabase.from('vendas').select('valor_final, created_at').eq('status', 'concluida').gte('created_at', todayStart),
         // Open cash drawer
         supabase.from('caixas').select('id, saldo_inicial, status').eq('status', 'aberto').order('created_at', { ascending: false }).limit(1),
-        // Critical stock
-        supabase.from('products').select('name, stock').eq('is_available', true).lt('stock', 5).order('stock', { ascending: true }).limit(5),
+        // Critical stock (Estoque Crítico / Baixo <= 6)
+        supabase.from('products').select('name, stock').eq('is_available', true).lte('stock', 6).order('stock', { ascending: true }).limit(8),
         // Pending accounts receivable
         supabase.from('contas_receber').select('valor').eq('status', 'pendente'),
         // Last 6 online orders
