@@ -11,6 +11,9 @@ import {
   User, 
   Bell,
   ChevronRight,
+  ChevronLeft,
+  Maximize2,
+  Minimize2,
   Users,
   Trash2,
   Check,
@@ -50,12 +53,65 @@ interface AdminLayoutProps {
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('fishhouse_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
   const [userName, setUserName] = useState<string>('Administrador');
   const location = useLocation();
   const navigate = useNavigate();
+
+  const toggleSidebarCollapse = (forceState?: boolean) => {
+    setIsSidebarCollapsed(prev => {
+      const next = typeof forceState === 'boolean' ? forceState : !prev;
+      try {
+        localStorage.setItem('fishhouse_sidebar_collapsed', String(next));
+      } catch (_) {}
+      return next;
+    });
+  };
+
+  const toggleFullscreen = () => {
+    try {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+
+    const handleCustomSidebar = (e: any) => {
+      if (e.detail?.collapsed !== undefined) {
+        toggleSidebarCollapse(e.detail.collapsed);
+      } else {
+        toggleSidebarCollapse();
+      }
+    };
+    const handleCustomFs = () => toggleFullscreen();
+
+    window.addEventListener('fishhouse:toggle-sidebar', handleCustomSidebar);
+    window.addEventListener('fishhouse:toggle-fullscreen', handleCustomFs);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      window.removeEventListener('fishhouse:toggle-sidebar', handleCustomSidebar);
+      window.removeEventListener('fishhouse:toggle-fullscreen', handleCustomFs);
+    };
+  }, []);
 
   const [newOrderPopup, setNewOrderPopup] = useState<any | null>(null);
 
@@ -229,13 +285,13 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         />
       )}
 
-      {/* Sidebar — uses a fixed drawer on mobile, shrinks on desktop */}
+      {/* Sidebar — uses a fixed drawer on mobile, collapses to icon-only (72px) or expands (256px) on desktop */}
       <aside
         style={{
-          width: isSidebarOpen ? '256px' : '0px',
-          minWidth: isSidebarOpen ? '256px' : '0px',
+          width: !isSidebarOpen ? '0px' : isSidebarCollapsed ? '72px' : '256px',
+          minWidth: !isSidebarOpen ? '0px' : isSidebarCollapsed ? '72px' : '256px',
           overflow: 'hidden',
-          transition: 'width 300ms ease, min-width 300ms ease',
+          transition: 'width 250ms cubic-bezier(0.4, 0, 0.2, 1), min-width 250ms cubic-bezier(0.4, 0, 0.2, 1)',
           pointerEvents: isSidebarOpen ? 'auto' : 'none',
           flexShrink: 0,
           display: 'flex',
@@ -248,21 +304,45 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
           zIndex: 70,
         }}
       >
-        {/* Sidebar inner — fixed 256px width so content never overflows */}
-        <div style={{ width: '256px', display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <div className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gold-500 rounded-xl flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(207,161,74,0.3)]">
+        {/* Sidebar inner */}
+        <div style={{ width: isSidebarCollapsed ? '72px' : '256px', display: 'flex', flexDirection: 'column', height: '100%', transition: 'width 250ms cubic-bezier(0.4, 0, 0.2, 1)' }}>
+          {/* Header */}
+          <div className={`p-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-between'} border-b border-white/5`}>
+            {isSidebarCollapsed ? (
+              <button
+                type="button"
+                onClick={() => toggleSidebarCollapse(false)}
+                title="Expandir Menu Lateral (Fish Admin)"
+                className="w-10 h-10 bg-gold-500 rounded-xl flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(207,161,74,0.3)] hover:scale-105 transition-transform cursor-pointer"
+              >
                 <Fish className="text-ink-950 w-6 h-6" />
-              </div>
-              <span className="font-display font-bold text-xl tracking-tight whitespace-nowrap">Fish Admin</span>
-            </div>
-            <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-2 text-gray-500 hover:text-white">
-              <X className="w-6 h-6" />
-            </button>
+              </button>
+            ) : (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gold-500 rounded-xl flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(207,161,74,0.3)]">
+                    <Fish className="text-ink-950 w-6 h-6" />
+                  </div>
+                  <span className="font-display font-bold text-xl tracking-tight whitespace-nowrap">Fish Admin</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={() => toggleSidebarCollapse(true)} 
+                    className="hidden md:flex p-1.5 text-gray-400 hover:text-gold-400 hover:bg-white/5 rounded-lg transition-all"
+                    title="Recolher Menu (Modo Ícones)"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-2 text-gray-500 hover:text-white">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
-          <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto custom-scrollbar">
+          {/* Navigation */}
+          <nav className={`flex-1 ${isSidebarCollapsed ? 'px-2 py-4' : 'px-4 py-6'} space-y-1.5 overflow-y-auto custom-scrollbar`}>
             {menuItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -270,10 +350,11 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                   key={item.path}
                   to={item.path}
                   end={item.path === '/admin'}
+                  title={item.name}
                   onClick={() => {
                     if (window.innerWidth < 768) setIsSidebarOpen(false);
                   }}
-                  className={({ isActive }) => `w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all group text-left cursor-pointer ${
+                  className={({ isActive }) => `w-full flex items-center ${isSidebarCollapsed ? 'justify-center p-3' : 'gap-4 px-4 py-3'} rounded-xl transition-all group text-left cursor-pointer ${
                     isActive
                     ? 'bg-gold-500 text-ink-950 shadow-lg shadow-gold-500/10 font-bold'
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -282,8 +363,12 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                   {({ isActive }) => (
                     <>
                       <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-ink-950' : 'group-hover:text-gold-500'}`} />
-                      <span className="font-medium whitespace-nowrap flex-1">{item.name}</span>
-                      {isActive && <ChevronRight className="w-4 h-4 opacity-50" />}
+                      {!isSidebarCollapsed && (
+                        <>
+                          <span className="font-medium whitespace-nowrap flex-1 text-sm">{item.name}</span>
+                          {isActive && <ChevronRight className="w-4 h-4 opacity-50" />}
+                        </>
+                      )}
                     </>
                   )}
                 </NavLink>
@@ -291,13 +376,32 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             })}
           </nav>
 
-          <div className="p-4 border-t border-white/10">
+          {/* Footer actions */}
+          <div className="p-3 border-t border-white/10 space-y-2">
+            {/* Botão de Toggle Collapse para Desktop */}
+            <button
+              onClick={() => toggleSidebarCollapse()}
+              className={`w-full hidden md:flex items-center ${isSidebarCollapsed ? 'justify-center py-2.5 px-0' : 'gap-3 px-3 py-2.5'} rounded-xl text-gray-400 hover:text-gold-400 hover:bg-gold-500/10 border border-white/5 hover:border-gold-500/20 transition-all text-left cursor-pointer`}
+              title={isSidebarCollapsed ? "Expandir Menu Lateral" : "Recolher Menu (Modo Ícones)"}
+            >
+              {isSidebarCollapsed ? (
+                <ChevronRight className="w-5 h-5 shrink-0 text-gold-400" />
+              ) : (
+                <>
+                  <ChevronLeft className="w-5 h-5 shrink-0 text-gold-400" />
+                  <span className="font-bold text-xs uppercase tracking-wider text-gray-300">Recolher Menu</span>
+                </>
+              )}
+            </button>
+
+            {/* Logout */}
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-gray-400 hover:text-red-400 hover:bg-red-400/5 transition-all text-left"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center py-2.5 px-0' : 'gap-3 px-3 py-2.5'} rounded-xl text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-all text-left cursor-pointer`}
+              title="Encerrar Sessão"
             >
               <LogOut className="w-5 h-5 shrink-0" />
-              <span className="font-medium text-sm">Encerrar Sessão</span>
+              {!isSidebarCollapsed && <span className="font-medium text-sm">Encerrar Sessão</span>}
             </button>
           </div>
         </div>
@@ -305,13 +409,20 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-        <header className="h-20 bg-ink-900/50 backdrop-blur-md border-b border-white/5 px-4 md:px-8 flex items-center justify-between sticky top-0 z-[50] shrink-0">
-          <div className="flex items-center gap-4">
+        <header className="h-16 md:h-20 bg-ink-900/50 backdrop-blur-md border-b border-white/5 px-4 md:px-8 flex items-center justify-between sticky top-0 z-[50] shrink-0">
+          <div className="flex items-center gap-3">
             <button 
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              onClick={() => {
+                if (window.innerWidth < 768) {
+                  setIsSidebarOpen(!isSidebarOpen);
+                } else {
+                  toggleSidebarCollapse();
+                }
+              }}
               className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+              title={isSidebarCollapsed ? "Expandir Menu Lateral" : "Recolher Menu"}
             >
-              {isSidebarOpen && window.innerWidth >= 768 ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              <Menu className="w-5 h-5" />
             </button>
             <h2 className="hidden md:block text-sm font-bold text-white uppercase tracking-[0.2em] opacity-50">
               {menuItems.find(i => i.path === location.pathname)?.name || 'Dashboard'}
@@ -321,7 +432,16 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             </h2>
           </div>
 
-          <div className="flex items-center gap-2 md:gap-4">
+          <div className="flex items-center gap-2 md:gap-3">
+            {/* Fullscreen Button */}
+            <button
+              onClick={toggleFullscreen}
+              className="p-2 text-gray-400 hover:text-gold-400 hover:bg-white/5 rounded-lg transition-all hidden sm:flex items-center cursor-pointer"
+              title={isFullscreen ? "Sair da Tela Cheia" : "Tela Cheia / Expandir Área Útil"}
+            >
+              {isFullscreen ? <Minimize2 className="w-4 h-4 text-gold-400" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+
             {/* Local-First Sync Engine Status Badge */}
             <SyncStatusBadge />
 

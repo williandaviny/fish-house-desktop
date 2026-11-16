@@ -26,7 +26,9 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
-  Star
+  Star,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { getOptimizedImageUrl } from '../utils/image';
 import { supabase } from '../lib/supabase';
@@ -728,7 +730,18 @@ export default function AdminProducts() {
           </h1>
           <p className="text-gray-400 mt-1">Controle o estoque e preços da sua peixaria.</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('fishhouse:toggle-sidebar'));
+            }}
+            title="Recolher / Expandir menu lateral para dar mais espaço à tabela"
+            className="hidden sm:flex items-center gap-2 px-4 py-3 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 rounded-xl font-bold text-xs transition-all cursor-pointer"
+          >
+            <Maximize2 className="w-4 h-4 text-gold-500" />
+            <span>Expandir Tela</span>
+          </button>
           <div className="hidden md:flex bg-white/5 border border-white/10 rounded-2xl p-2 items-center gap-2 group hover:bg-gold-500/10 hover:border-gold-500/30 transition-all">
             <Barcode className="w-5 h-5 text-gold-500 group-hover:scale-110 transition-transform" />
             <div className="text-left pr-4">

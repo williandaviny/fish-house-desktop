@@ -31,7 +31,9 @@ import {
   ArrowUpCircle,
   Split,
   Layers,
-  Coins
+  Coins,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../hooks/useSettings';
@@ -1775,130 +1777,169 @@ export default function PDV() {
           <span className="bg-amber-500/20 text-amber-200 border border-amber-500/30 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider">Apenas Consulta</span>
         </div>
       )}
+      {/* TOP FULL-WIDTH PDV CONTROL BAR - 100% largura responsiva, nunca corta botões */}
+      <div className="bg-ink-900/90 border-b border-white/10 px-4 py-2 flex flex-wrap items-center justify-between gap-2 shrink-0 z-20 backdrop-blur-md">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="bg-green-500/10 text-green-500 border border-green-500/20 px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 animate-pulse shrink-0">
+            <Clock className="w-3.5 h-3.5" /> Caixa Aberto
+          </span>
+
+          {/* Indicador / Botão de Conexão com a Balança Toledo */}
+          <button
+            type="button"
+            onClick={() => {
+              if (scale.status === 'connected') {
+                scale.requestWeight();
+              } else {
+                scale.connect(true);
+              }
+            }}
+            title={
+              scale.status === 'connected'
+                ? `Balança Toledo Conectada (${scale.weight.toFixed(3)} kg) - Clique para forçar leitura`
+                : 'Clique para conectar balança Toledo'
+            }
+            className={`px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer ${
+              scale.status === 'connected'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                : scale.status === 'connecting'
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse'
+                : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
+            }`}
+          >
+            <Barcode className="w-3.5 h-3.5 text-gold-500" />
+            {scale.status === 'connected' ? (
+              <span>Balança: <strong className="text-white font-mono">{scale.weight.toFixed(3)} kg</strong></span>
+            ) : scale.status === 'connecting' ? (
+              <span>Conectando Balança...</span>
+            ) : (
+              <span>Conectar Balança</span>
+            )}
+          </button>
+
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (manualBarcode.trim()) {
+                handleBarcodeScanned(manualBarcode.trim());
+                setManualBarcode('');
+              }
+            }}
+            className="flex items-center gap-1.5 bg-gold-500/10 text-gold-500 border border-gold-500/20 px-3 py-1 rounded-full text-[10px] font-black uppercase shrink-0"
+          >
+            <Barcode className="w-3.5 h-3.5 animate-pulse shrink-0" />
+            <input 
+              type="text" 
+              placeholder="Digitar Código..." 
+              value={manualBarcode}
+              onChange={e => setManualBarcode(e.target.value)}
+              className="bg-transparent border-none text-[10px] font-black text-gold-500 placeholder-gold-500/50 focus:outline-none w-28 p-0"
+            />
+          </form>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 md:gap-2">
+          <button 
+            type="button"
+            onClick={() => {
+              setMovimentacaoValor('');
+              setMovimentacaoMotivo('Troco inicial / Entrada de moedas');
+              setIsSuprimentoModalOpen(true);
+            }}
+            title="Lançar Suprimento (Entrada de Dinheiro / Troco na Gaveta)"
+            className="px-2.5 py-1 bg-green-500/10 hover:bg-green-500/20 text-green-400 hover:text-green-300 border border-green-500/30 rounded-full text-[10px] font-black uppercase flex items-center gap-1 transition-all cursor-pointer"
+          >
+            <ArrowDownCircle className="w-3.5 h-3.5" /> + Suprimento
+          </button>
+          <button 
+            type="button"
+            onClick={() => {
+              setMovimentacaoValor('');
+              setMovimentacaoMotivo('Sangria de segurança / Retirada');
+              setIsSangriaModalOpen(true);
+            }}
+            title="Lançar Sangria (Retirada de Dinheiro da Gaveta)"
+            className="px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded-full text-[10px] font-black uppercase flex items-center gap-1 transition-all cursor-pointer"
+          >
+            <ArrowUpCircle className="w-3.5 h-3.5" /> - Sangria
+          </button>
+          <button 
+            type="button"
+            onClick={() => {
+              fetchShiftSales();
+              setIsShiftSalesModalOpen(true);
+            }}
+            title="Visualizar e Cancelar Vendas do Turno Atual"
+            className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer"
+          >
+            <FileText className="w-3.5 h-3.5 text-gold-500" /> Vendas
+          </button>
+          <button 
+            type="button"
+            onClick={() => handlePrintCaixaReport(false)}
+            disabled={isPrintingReport}
+            title="Imprimir Resumo do Dia / Leitura X na impressora térmica"
+            className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gold-400 hover:text-gold-300 border border-gold-500/20 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+          >
+            <Printer className="w-3.5 h-3.5" /> {isPrintingReport ? 'Imprimindo...' : 'Leitura X'}
+          </button>
+          <button 
+            type="button"
+            onClick={() => setIsTefAdminModalOpen(true)}
+            className="text-[10px] text-gray-400 hover:text-gold-300 font-bold uppercase tracking-wider flex items-center gap-1 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-full border border-white/5 transition-all cursor-pointer"
+            title="Funções Administrativas do TEF"
+          >
+            <CreditCard className="w-3 h-3 text-gold-400" /> TEF
+          </button>
+          
+          {/* Botão de Expandir Tela / Maximizar PDV */}
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('fishhouse:toggle-fullscreen'));
+              window.dispatchEvent(new CustomEvent('fishhouse:toggle-sidebar', { detail: { collapsed: true } }));
+            }}
+            title="Expandir Tela / Maximizar PDV (Recolhe Menu Lateral e Ativa Tela Cheia)"
+            className="text-[10px] text-sky-400 hover:text-sky-300 font-bold uppercase tracking-wider flex items-center gap-1 bg-sky-500/10 hover:bg-sky-500/20 px-2.5 py-1 rounded-full border border-sky-500/20 transition-all cursor-pointer"
+          >
+            <Maximize2 className="w-3 h-3" /> Expandir
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => setIsClosingCaixa(true)}
+            className="text-[10px] text-red-400 hover:text-red-300 font-black uppercase tracking-wider flex items-center gap-1 bg-red-500/10 hover:bg-red-500/20 px-2.5 py-1 rounded-full border border-red-500/20 transition-all cursor-pointer"
+            title="Encerrar Turno e Fechar Caixa"
+          >
+            <Square className="w-3 h-3 fill-current" /> Fechar
+          </button>
+        </div>
+      </div>
+
       <div className="flex-1 bg-ink-950 flex flex-col md:flex-row overflow-hidden">
       
       {/* LEFT COLUMN: Shopping Cart & Totals */}
       <div className="flex-1 md:w-1/2 flex flex-col border-r border-white/10 h-full overflow-hidden bg-ink-900/30">
         
-        {/* Cart Header */}
-        <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5 shrink-0">
-          <div className="flex items-center gap-3">
-            <span className="bg-green-500/10 text-green-500 border border-green-500/20 px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 animate-pulse">
-              <Clock className="w-3.5 h-3.5" /> Caixa Aberto
+        {/* Cart Header Minimal */}
+        <div className="px-4 py-2.5 border-b border-white/10 flex justify-between items-center bg-white/5 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-300">Carrinho de Compras</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-gold-500/20 text-gold-400 border border-gold-500/30">
+              {cart.length} {cart.length === 1 ? 'item' : 'itens'}
             </span>
-
-            {/* Indicador / Botão de Conexão com a Balança Toledo */}
+          </div>
+          {cart.length > 0 && (
             <button
               type="button"
               onClick={() => {
-                if (scale.status === 'connected') {
-                  scale.requestWeight();
-                } else {
-                  scale.connect(true);
-                }
+                if (confirm('Deseja limpar todo o carrinho?')) setCart([]);
               }}
-              title={
-                scale.status === 'connected'
-                  ? `Balança Toledo Conectada (${scale.weight.toFixed(3)} kg) - Clique para forçar leitura`
-                  : 'Clique para conectar balança Toledo'
-              }
-              className={`px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all border ${
-                scale.status === 'connected'
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
-                  : scale.status === 'connecting'
-                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse'
-                  : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
-              }`}
+              className="text-[10px] text-red-400 hover:text-red-300 font-bold uppercase tracking-wider flex items-center gap-1 hover:underline cursor-pointer"
             >
-              <Barcode className="w-3.5 h-3.5 text-gold-500" />
-              {scale.status === 'connected' ? (
-                <span>Balança: <strong className="text-white font-mono">{scale.weight.toFixed(3)} kg</strong></span>
-              ) : scale.status === 'connecting' ? (
-                <span>Conectando Balança...</span>
-              ) : (
-                <span>Conectar Balança</span>
-              )}
+              <Trash2 className="w-3 h-3" /> Limpar Carrinho
             </button>
-            <form 
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (manualBarcode.trim()) {
-                  handleBarcodeScanned(manualBarcode.trim());
-                  setManualBarcode('');
-                }
-              }}
-              className="flex items-center gap-1.5 bg-gold-500/10 text-gold-500 border border-gold-500/20 px-3 py-1 rounded-full text-[10px] font-black uppercase"
-            >
-              <Barcode className="w-3.5 h-3.5 animate-pulse shrink-0" />
-              <input 
-                type="text" 
-                placeholder="Digitar Código..." 
-                value={manualBarcode}
-                onChange={e => setManualBarcode(e.target.value)}
-                className="bg-transparent border-none text-[10px] font-black text-gold-500 placeholder-gold-500/50 focus:outline-none w-28 p-0"
-              />
-            </form>
-          </div>
-          <div className="flex items-center gap-2">
-            <button 
-              type="button"
-              onClick={() => {
-                setMovimentacaoValor('');
-                setMovimentacaoMotivo('Troco inicial / Entrada de moedas');
-                setIsSuprimentoModalOpen(true);
-              }}
-              title="Lançar Suprimento (Entrada de Dinheiro / Troco na Gaveta)"
-              className="px-2.5 py-1 bg-green-500/10 hover:bg-green-500/20 text-green-400 hover:text-green-300 border border-green-500/30 rounded-full text-[10px] font-black uppercase flex items-center gap-1 transition-all"
-            >
-              <ArrowDownCircle className="w-3.5 h-3.5" /> + Suprimento
-            </button>
-            <button 
-              type="button"
-              onClick={() => {
-                setMovimentacaoValor('');
-                setMovimentacaoMotivo('Sangria de segurança / Retirada');
-                setIsSangriaModalOpen(true);
-              }}
-              title="Lançar Sangria (Retirada de Dinheiro da Gaveta)"
-              className="px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded-full text-[10px] font-black uppercase flex items-center gap-1 transition-all"
-            >
-              <ArrowUpCircle className="w-3.5 h-3.5" /> - Sangria
-            </button>
-            <button 
-              type="button"
-              onClick={() => {
-                fetchShiftSales();
-                setIsShiftSalesModalOpen(true);
-              }}
-              title="Visualizar e Cancelar Vendas do Turno Atual"
-              className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all"
-            >
-              <FileText className="w-3.5 h-3.5 text-gold-500" /> Vendas
-            </button>
-            <button 
-              type="button"
-              onClick={() => handlePrintCaixaReport(false)}
-              disabled={isPrintingReport}
-              title="Imprimir Resumo do Dia / Leitura X na impressora térmica"
-              className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gold-400 hover:text-gold-300 border border-gold-500/20 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 transition-all disabled:opacity-50"
-            >
-              <Printer className="w-3.5 h-3.5" /> {isPrintingReport ? 'Imprimindo...' : 'Leitura X'}
-            </button>
-            <button 
-              type="button"
-              onClick={() => setIsTefAdminModalOpen(true)}
-              className="text-[10px] text-gray-400 hover:text-gold-300 font-bold uppercase tracking-wider flex items-center gap-1 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-full border border-white/5 transition-all"
-            >
-              <CreditCard className="w-3 h-3 text-gold-400" /> TEF
-            </button>
-            <button 
-              type="button"
-              onClick={() => setIsClosingCaixa(true)}
-              className="text-[10px] text-red-400 hover:text-red-300 font-black uppercase tracking-wider flex items-center gap-1 bg-red-500/10 hover:bg-red-500/20 px-2.5 py-1 rounded-full border border-red-500/20 transition-all"
-            >
-              <Square className="w-3 h-3 fill-current" /> Fechar
-            </button>
-          </div>
+          )}
         </div>
 
         {/* Cart Items List */}
