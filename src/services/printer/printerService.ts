@@ -291,6 +291,45 @@ export function formatMovimentacaoCaixaReceiptText(params: {
 }
 
 /**
+ * Formata o comprovante de Abertura de Caixa para bobina térmica
+ */
+export function formatAberturaCaixaReceiptText(params: {
+  caixaId: string;
+  saldoInicial: number;
+  operadorNome?: string;
+  dataAbertura?: Date | string;
+}): string {
+  const sep = '==========================================';
+  const dash = '------------------------------------------';
+  const now = new Date(params.dataAbertura || new Date()).toLocaleString('pt-BR');
+  const shortId = params.caixaId.slice(0, 8).toUpperCase();
+
+  let out = '';
+  out += `${sep}\r\n`;
+  out += `          FISH HOUSE SC LTDA\r\n`;
+  out += ` CNPJ: 63.265.618/0001-01 - IE: 263906078\r\n`;
+  out += ` Rua Pref. Juvenal Mafra, 42 - Centro\r\n`;
+  out += ` Navegantes/SC - Fone: (47) 3011-4981\r\n`;
+  out += `${sep}\r\n`;
+  out += `      COMPROVANTE DE ABERTURA DE CAIXA\r\n`;
+  out += `          (INÍCIO DE TURNO / PDV)\r\n`;
+  out += `Emissão : ${now}\r\n`;
+  out += `Caixa ID: #${shortId}\r\n`;
+  if (params.operadorNome) {
+    out += `Operador: ${params.operadorNome}\r\n`;
+  }
+  out += `${dash}\r\n`;
+  out += `FUNDO DE TROCO INICIAL: R$ ${params.saldoInicial.toFixed(2).padStart(10, ' ')}\r\n`;
+  out += `STATUS DO TURNO       : ABERTO\r\n`;
+  out += `${dash}\r\n`;
+  out += `Assinatura do Operador:\r\n\r\n\r\n`;
+  out += `__________________________________________\r\n`;
+  out += `\r\n\r\n\r\n\r\n`;
+
+  return out;
+}
+
+/**
  * Formata o relatório financeiro do Caixa para bobina térmica (Leitura X ou Fechamento)
  */
 export function formatCaixaReportText(params: {

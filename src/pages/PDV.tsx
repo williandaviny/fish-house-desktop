@@ -51,6 +51,7 @@ import {
   formatSaleReceiptText, 
   formatCaixaReportText, 
   formatMovimentacaoCaixaReceiptText,
+  formatAberturaCaixaReceiptText,
   getLocalPrinterSettings 
 } from '../services/printer/printerService';
 
@@ -102,6 +103,7 @@ export default function PDV() {
   const [openingBalance, setOpeningBalance] = useState<string>('100.00');
   const [closingBalance, setClosingBalance] = useState<string>('0.00');
   const [isOpeningCaixa, setIsOpeningCaixa] = useState(false);
+  const [printOpeningSlip, setPrintOpeningSlip] = useState(true);
   const [isClosingCaixa, setIsClosingCaixa] = useState(false);
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -459,6 +461,21 @@ export default function PDV() {
       fetchProducts();
       fetchCustomers();
       fetchMovimentacoesCaixa(data.id);
+
+      if (printOpeningSlip) {
+        try {
+          const operadorNome = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador';
+          const slipText = formatAberturaCaixaReceiptText({
+            caixaId: data.id,
+            saldoInicial: Number(openingBalance),
+            operadorNome,
+            dataAbertura: data.data_abertura || new Date()
+          });
+          await printThermalText(slipText);
+        } catch (printErr) {
+          console.warn('[PDV] Falha ao imprimir comprovante de abertura:', printErr);
+        }
+      }
     } else {
       alert('Erro ao abrir caixa: ' + (error?.message || 'Verifique suas permissões'));
     }
@@ -1746,6 +1763,16 @@ export default function PDV() {
                 className="w-full bg-ink-950 border border-white/10 rounded-2xl py-4 px-6 text-2xl font-bold text-center text-white focus:border-gold-500 focus:outline-none"
               />
             </div>
+
+            <label className="flex items-center justify-center gap-2.5 text-xs text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={printOpeningSlip}
+                onChange={e => setPrintOpeningSlip(e.target.checked)}
+                className="w-4 h-4 rounded accent-gold-500 cursor-pointer"
+              />
+              <span>Imprimir comprovante de abertura na térmica</span>
+            </label>
 
             <button 
               type="submit" 
