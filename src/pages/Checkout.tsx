@@ -699,13 +699,44 @@ export default function Checkout() {
                             />
                           </div>
                           <div className="space-y-1">
-                            <label className="text-sm text-gray-400 ml-1">Complemento</label>
+                            <div className="flex items-center justify-between ml-1">
+                              <label className="text-sm text-gray-400">
+                                Complemento <span className="text-gold-500 font-bold">*</span>
+                              </label>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setFormData({...formData, complement: 'Casa'})}
+                                  className={`text-[10px] px-2 py-0.5 rounded-md border font-bold uppercase tracking-wider transition-all ${
+                                    formData.complement.trim().toLowerCase() === 'casa'
+                                      ? 'bg-gold-500 text-ink-950 border-gold-500'
+                                      : 'bg-white/5 text-gray-400 border-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  Casa
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setFormData({...formData, complement: formData.complement.startsWith('Apt') ? formData.complement : 'Apt '})}
+                                  className={`text-[10px] px-2 py-0.5 rounded-md border font-bold uppercase tracking-wider transition-all ${
+                                    formData.complement.toLowerCase().includes('apt')
+                                      ? 'bg-gold-500 text-ink-950 border-gold-500'
+                                      : 'bg-white/5 text-gray-400 border-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  Apartamento
+                                </button>
+                              </div>
+                            </div>
                             <input 
                               type="text" 
+                              required
                               value={formData.complement}
                               onChange={e => setFormData({...formData, complement: e.target.value})}
-                              className="w-full bg-ink-800 border border-white/5 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-gold-500/50 transition-colors"
-                              placeholder="Apt, Sala, etc."
+                              className={`w-full bg-ink-800 border rounded-xl px-4 py-3 text-white focus:outline-none focus:border-gold-500/50 transition-colors ${
+                                !formData.complement.trim() ? 'border-gold-500/30' : 'border-white/5'
+                              }`}
+                              placeholder="Obrigatório: Casa, Apt, Bloco, Sala..."
                             />
                           </div>
                         </div>
@@ -778,8 +809,12 @@ export default function Checkout() {
                           return;
                         }
                         if (formData.deliveryType === 'delivery') {
-                          if (!formData.cep || !formData.number) {
-                            alert('Por favor, preencha os dados de entrega');
+                          if (!formData.cep || !formData.street || !formData.number || !formData.neighborhood) {
+                            alert('Por favor, preencha os dados completos de entrega (CEP, Rua, Número e Bairro).');
+                            return;
+                          }
+                          if (!formData.complement || !formData.complement.trim()) {
+                            alert('Por favor, informe o Complemento (ex: Casa, Apartamento, Bloco/Sala). Este campo é obrigatório para a entrega.');
                             return;
                           }
                           if (!isCityAllowed) {
